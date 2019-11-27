@@ -5,6 +5,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include <stdint.h>
 
 #define MAX_UBOOT_RWRETRY       5
 
