@@ -6,6 +6,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <sys/time.h>
+#include <vector>
 
 class EventsProcess {
   public:
@@ -17,7 +18,8 @@ class EventsProcess {
     virtual ~EventsProcess() { }
     virtual void Init();
     virtual void WaitKey();
-    virtual void KeyLongPress(int key);
+//    virtual void KeyLongPress(int key);
+    
 protected:
     void EnqueueKey(int key_code);
 private:
@@ -31,12 +33,22 @@ private:
     bool enable_reboot;
     int rel_sum;
 
+    struct KeyEvent {
+      int64_t down_ts_us;
+      int64_t up_ts_us;
+      int keyCode;
+      int keyState;
+      bool longPress;
+    };
+    std::vector<KeyEvent *> mKeyEventVec;
+
     int last_key;
     bool report_longpress_flag;
     struct key_timer_t {
         EventsProcess* ep;
         int key_code;
         int count;
+        KeyEvent *ke;
     };
 
     int num_keys;
@@ -53,10 +65,12 @@ private:
     void ProcessKey(int key_code, int updown);
 
     static void* time_key_helper(void* cookie);
-    void time_key(int key_code, int count);
+//    void time_key(int key_code, int count);
+    void time_key(key_timer_t *info);
     const char* getKeyType(int key);
     void load_key_map();
     int getMapKey(int key);
+    uint64_t getSystemTimeUs();
 };
 
 #endif  // RECOVERY_UI_H
