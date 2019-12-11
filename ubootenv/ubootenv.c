@@ -67,6 +67,8 @@ static env_attribute * env_parse_attribute(void) {
         if (key != NULL) {
             *key=0;
             strcpy(attr->key, proc);
+            attr->value = (char *)malloc(strlen(key+1)+1);
+            memset(attr->value,0,strlen(key+1)+1);
             strcpy(attr->value, key+sizeof(char));
         } else {
             ERROR("[ubootenv] error need '=' skip this value\n");
@@ -515,6 +517,7 @@ int bootenv_reinit(void) {
    while (pAttr) {
        pTmp = pAttr;
        pAttr = pAttr->next;
+       free(pTmp->value);
        free(pTmp);
    }
    bootenv_init();
