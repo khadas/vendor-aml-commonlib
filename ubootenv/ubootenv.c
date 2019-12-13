@@ -139,7 +139,7 @@ int read_bootenv() {
         return -1;
     }
 
-    addr = malloc(ENV_PARTITIONS_SIZE);
+    addr = (char *)malloc(ENV_PARTITIONS_SIZE);
     if (addr == NULL) {
         ERROR("[ubootenv] Not enough memory for environment (%u bytes)\n",ENV_PARTITIONS_SIZE);
         close(fd);
