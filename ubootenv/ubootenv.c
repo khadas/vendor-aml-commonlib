@@ -205,6 +205,11 @@ int bootenv_set_value(const char * key,  const char * value,int creat_args_flag)
     env_attribute *last = attr;
     while (attr) {
         if (!strcmp(key,attr->key)) {
+            if (attr->value != NULL) {
+                free(attr->value);
+            }
+            attr->value = (char *)malloc(strlen(value)+1);
+            memset(attr->value,0,strlen(value)+1);
             strcpy(attr->value,value);
             return 2;
         }
@@ -219,6 +224,8 @@ int bootenv_set_value(const char * key,  const char * value,int creat_args_flag)
         last->next = attr;
         memset(attr, 0, sizeof(env_attribute));
         strcpy(attr->key,key);
+        attr->value = (char *)malloc(strlen(value)+1);
+        memset(attr->value,0,strlen(value)+1);
         strcpy(attr->value,value);
         return 1;
     }else {
