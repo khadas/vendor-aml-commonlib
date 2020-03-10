@@ -344,6 +344,19 @@ static const dongle_info dongle_registerd[] = {
 		0xb82c
 	},
 	{
+		"c822",
+		"8822cs",
+		"8822cs.ko",
+		REALTEK_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_IFNAME,
+			.ifname     = "wlan0",
+			.if2name    = "p2p0",
+		},
+		"rtl8822cs",
+		0x0
+	},
+	{
 		"3030",
 		"ssv6051",
 		"ssv6051.ko",
