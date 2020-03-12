@@ -22,3 +22,7 @@ clean:
 install:
 	install -m 755 $(TARGET) $(STAGING_DIR)/usr/lib
 	install -m 755 $(TARGET) $(TARGET_DIR)/usr/lib
+	mkdir -p $(STAGING_DIR)/usr/include/android
+	mkdir -p $(STAGING_DIR)/usr/include/cutils
+	install -m 755 $(LIBLOG_SRC_DIR)/include/android/*  $(STAGING_DIR)/usr/include/android/
+	install -m 755 $(LIBLOG_SRC_DIR)/include/cutils/*  $(STAGING_DIR)/usr/include/cutils/
