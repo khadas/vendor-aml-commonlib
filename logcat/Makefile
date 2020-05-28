@@ -7,15 +7,19 @@ OBJ = logcat.o
 CFLAGS = -Wall -Wextra -I $(LOGCAT_DIR)/include -DHAVE_IOCTL
 LDFLAGS = -L$(STAGING_DIR)/usr/lib -llog
 TARGET=logcat
+TEST := logcat_test
 
 # rules
-all: $(TARGET)
+all: $(TARGET) $(TEST)
 
 $(TARGET): $(OBJ)
+	$(CXX) $(LDFLAGS) $^ -o $@
+
+$(TEST): logcat_test.c
 	$(CC) $(LDFLAGS) $^ -o $@
 
 %.o: %.cpp
-	$(CC) -c $(CFLAGS) $^ -o $@
+	$(CXX) -c $(CFLAGS) $^ -o $@
 
 .PHONY: clean
 
