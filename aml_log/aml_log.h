@@ -90,6 +90,7 @@ struct AmlLogCat {
 #define AML_LOGI(fmt, ...) AML_LOG_CAT(DEFAULT, 2, fmt, ##__VA_ARGS__)
 #define AML_LOGW(fmt, ...) AML_LOG_CAT(DEFAULT, 1, fmt, ##__VA_ARGS__)
 #define AML_LOGE(fmt, ...) AML_LOG_CAT(DEFAULT, 0, fmt, ##__VA_ARGS__)
+#define AML_LOG(level, fmt, ...) AML_LOG_CAT(DEFAULT, level, fmt, ##__VA_ARGS__)
 
 #define AML_LOGCATVVV(cat, fmt, ...) AML_LOG_CAT(cat, 6, fmt, ##__VA_ARGS__)
 #define AML_LOGCATVV(cat, fmt, ...) AML_LOG_CAT(cat, 5, fmt, ##__VA_ARGS__)

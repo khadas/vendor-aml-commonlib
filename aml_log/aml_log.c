@@ -163,59 +163,57 @@ static void get_setting_from_string(AMLLogType_e type, const char *str) {
 
     pthread_mutex_lock(&g_aml_log_lock);
 
-    // updae all module
-    for (node = newhead; node != NULL; node = node->next) {
-      if (regexec(&node->pattern, "all", 0, NULL, 0) == 0) {
-        for (cat = g_aml_log_cat_list; cat != NULL; cat = cat->next) {
-          if (cat->name) {
+    node = newhead;
+    // update all module
+    if (regexec(&node->pattern, "all", 0, NULL, 0) == 0) {
+      for (cat = g_aml_log_cat_list; cat != NULL; cat = cat->next) {
+        if (cat->name) {
+          if (type == AML_DEBUG_LOG) {
+            cat->log_level = node->level;
+            //printf("change name:%s, debug_level:%d\n", cat->name, cat->log_level);
+          } else {
+            cat->trace_level = node->level;
+            //printf("change name:%s, trace_level:%d\n", cat->name, cat->trace_level);
+          }
+        }
+      }
+      node = node->next;
+    }
+
+    // update sub module
+    for (; node != NULL;) {
+      for (cat = g_aml_log_cat_list; cat != NULL; cat = cat->next) {
+        if (cat->name) {
+          //printf("%s get name:%s, debug_level:%d, trace_level:%d\n",
+          //  __progname, cat->name, cat->log_level, cat->trace_level);
+          if (regexec(&node->pattern, cat->name, 0, NULL, 0) == 0) {
             if (type == AML_DEBUG_LOG) {
               cat->log_level = node->level;
               //printf("change name:%s, debug_level:%d\n", cat->name, cat->log_level);
             } else {
               cat->trace_level = node->level;
-              //printf("change name:%s, trace_level:%d\n", cat->name, cat->trace_level);
+              //printf("name:%s, trace_level:%d\n", cat->name, cat->trace_level);
             }
+            break;
           }
         }
-        break;
       }
-    }
 
-    if (node == NULL) {
-      for (node = newhead; node != NULL;) {
-        for (cat = g_aml_log_cat_list; cat != NULL; cat = cat->next) {
-          if (cat->name) {
-            //printf("%s get name:%s, debug_level:%d, trace_level:%d\n",
-            //  __progname, cat->name, cat->log_level, cat->trace_level);
-            if (regexec(&node->pattern, cat->name, 0, NULL, 0) == 0) {
-              if (type == AML_DEBUG_LOG) {
-                cat->log_level = node->level;
-                //printf("change name:%s, debug_level:%d\n", cat->name, cat->log_level);
-              } else {
-                cat->trace_level = node->level;
-                //printf("name:%s, trace_level:%d\n", cat->name, cat->trace_level);
-              }
-              break;
-            }
-          }
-        }
+      // no match in cat_list, save the node
+      if (cat == NULL) {
+        if (node_prev == NULL)
+          newhead = node->next;
+        else
+          node_prev->next = node->next;
 
-        // no match in cat_list, save the node
-        if (cat == NULL) {
-          if (node_prev == NULL)
-            newhead = node->next;
-          else
-            node_prev->next = node->next;
+        tmp_node = node;
+        node = node->next;
 
-          tmp_node = node;
-          node = node->next;
-
-          tmp_node->next = head;
-          head = tmp_node;
-        } else {
-          node_prev = node;
-          node = node->next;
-        }
+        tmp_node->next = head;
+        head = tmp_node;
+      } else {
+        node_prev = node;
+        node = node->next;
       }
     }
 
@@ -269,7 +267,7 @@ void aml_log_msg(struct AmlLogCat *cat, int level, const char *file, const char 
     va_start(ap, fmt);
     vsnprintf(&buf[len], sizeof(buf) - len, fmt, ap);
     va_end(ap);
-    fprintf(log_fp ?: stdout, "%s\n", buf);
+    fprintf(log_fp ?: stdout, "%s", buf);
 }
 
 static FILE *trace_json_fp = NULL;
