@@ -69,7 +69,7 @@ struct SIPC_HandleInternal {
 
 static SIPC_Handle serv_list = NULL;
 static pthread_t serv_pthread_id;
-static pthread_mutex_t serv_mutex;
+static pthread_mutex_t serv_mutex = PTHREAD_MUTEX_INITIALIZER;
 static bool serv_status = false;
 
 static int32_t _ipc_pack_number(struct SIPC_DataType * type, void * buf, int len, va_list * va) {
@@ -229,7 +229,6 @@ void ipc_init(void)
 {
   SIPC_LOG1("ipc_init");
 
-  pthread_mutex_init(&serv_mutex, NULL);
   serv_status = true;
   pthread_create(&serv_pthread_id, NULL, serv_pthread_func, NULL);
 }
@@ -273,20 +272,6 @@ SIPC_Handle ipc_create_channel(const char * bindaddr)
     } else {
         SIPC_LOG1("bind to addr %.*s addrlen %d", serv->addrlen-3, &serv->addr.sun_path[1], serv->addrlen);
     }
-
-    if (serv_list == NULL) ipc_init();
-
-    pthread_mutex_lock(&serv_mutex);
-    if (bindaddr) {
-      if (serv_list) {
-        serv->next_serv = serv_list;
-        serv_list = serv;
-      } else {
-        serv->next_serv = NULL;
-        serv_list = serv;
-      }
-    }
-    pthread_mutex_unlock(&serv_mutex);
     return serv;
 
 error:
@@ -316,6 +301,31 @@ SIPC_Peer ipc_open_peer(SIPC_Handle serv, const char * remoteaddr)
     return ipc;
 }
 
+SIPC_Peer ipc_open(const char * bindaddr, const char * remoteaddr)
+{
+  SIPC_Handle serv = NULL;
+  SIPC_Peer ipc = NULL;
+
+  serv = ipc_create_channel(bindaddr);
+  ipc = ipc_open_peer(serv, remoteaddr);
+
+  pthread_mutex_lock(&serv_mutex);
+  if (serv_list == NULL) ipc_init();
+
+  if (serv) {
+    if (serv_list) {
+      serv->next_serv = serv_list;
+      serv_list = serv;
+    } else {
+      serv->next_serv = NULL;
+      serv_list = serv;
+    }
+  }
+  pthread_mutex_unlock(&serv_mutex);
+
+  return ipc;
+}
+
 void ipc_close_peer(SIPC_Peer ipc)
 {
     if (ipc->serv) {
@@ -339,8 +349,6 @@ void ipc_close_peer(SIPC_Peer ipc)
 
 void ipc_close_channel(SIPC_Handle serv)
 {
-    SIPC_Handle tmp, tmp_prev;
-
     if (serv->sockfd >= 0) {
         close(serv->sockfd);
         serv->sockfd = -1;
@@ -350,23 +358,34 @@ void ipc_close_channel(SIPC_Handle serv)
         serv->next = ipc->next;
         ipc_close_peer(ipc);
     }
-
-    pthread_mutex_lock(&serv_mutex);
-    for (tmp = serv_list; tmp != NULL; tmp = tmp->next_serv) {
-      if (tmp == serv) {
-        if (tmp_prev == NULL)
-          serv_list = tmp->next_serv;
-        else
-          tmp_prev = tmp->next_serv;
-        break;
-      } else {
-        tmp_prev = tmp;
-      }
-    }
-    pthread_mutex_unlock(&serv_mutex);
     free(serv);
+}
 
-    if (serv_list == NULL) ipc_exit();
+int32_t ipc_close(SIPC_Peer ipc)
+{
+  SIPC_Handle tmp, tmp_prev;
+
+  if (ipc == NULL) return SIPC_ERR_PARAM;
+
+  pthread_mutex_lock(&serv_mutex);
+  for (tmp = serv_list; tmp != NULL; tmp = tmp->next_serv) {
+    if (tmp == ipc->serv) {
+      if (tmp_prev == NULL)
+        serv_list = tmp->next_serv;
+      else
+        tmp_prev = tmp->next_serv;
+      break;
+    } else {
+      tmp_prev = tmp;
+    }
+  }
+
+  if (serv_list == NULL) ipc_exit();
+  pthread_mutex_unlock(&serv_mutex);
+
+  ipc_close_channel(ipc->serv);
+
+  return SIPC_NO_ERR;
 }
 
 int32_t ipc_run_loop(SIPC_Handle serv)
@@ -505,6 +524,10 @@ int32_t ipc_call_va(SIPC_Peer ipc, SIPC_Function * func, va_list* va)
         }
     }
 #endif
+    if (ipc == NULL) {
+      SIPC_LOG2("call ipc_call_va SIPC_Peer is NULL");
+      return SIPC_ERR_PARAM;
+    }
     char *buf = ipc->buffer;
     int len = sizeof(ipc->buffer);
     int len1 = ipc_pack_args(buf, len, SIPC_FUNCTION(_call)->argfmt, ipc->ipc_id, func->call_id, func->name);

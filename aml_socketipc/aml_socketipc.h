@@ -292,6 +292,10 @@ void ipc_close_channel(SIPC_Handle serv);
 // open a peer channel to make IPC call
 SIPC_Peer ipc_open_peer(SIPC_Handle serv, const char * remoteaddr);
 void ipc_close_peer(SIPC_Peer ipc);
+// open ipc channel
+SIPC_Peer ipc_open(const char * bindaddr, const char * remoteaddr);
+// close ipc channel
+int32_t ipc_close(SIPC_Peer ipc);
 // run the main loop, it will not return
 int32_t ipc_run_loop(SIPC_Handle serv);
 // exit the most inner loop, return loop level
