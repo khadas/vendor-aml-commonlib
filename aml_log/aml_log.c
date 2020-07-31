@@ -36,6 +36,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/prctl.h>
+#include <sys/inotify.h>
 
 #include "aml_log.h"
 
@@ -92,24 +93,22 @@ static void aml_log_add(struct AmlLogCat *cat) {
 }
 
 static int level_str_to_level(const char *level_str) {
-    int level = 1;
+  char *log_level[] = { "LOG_QUIET", "LOG_ERR", "LOG_WARNING", "LOG_INFO",
+                        "LOG_DEBUG", "LOG_VERBOSE", NULL };
+  int level = 0;
 
-    if (!strcmp("LOG_QUIET", level_str))
-        level = 0;
-    else if (!strcmp("LOG_ERR", level_str))
-        level = 1;
-    else if (!strcmp("LOG_WARNING", level_str))
-        level = 2;
-    else if (!strcmp("LOG_INFO", level_str))
-        level = 3;
-    else if (!strcmp("LOG_DEBUG", level_str))
-        level = 4;
-    else if (!strcmp("LOG_VERBOSE", level_str))
-        level = 5;
-    else
-        printf("level str error: %s\n", level_str);
+  while (log_level[level]) {
+    if (!strncmp(log_level[level], level_str, strlen(log_level[level])))
+      break;
+    level++;
+  }
 
-    return level;
+  if (log_level[level] == NULL) {
+    printf("level str error: %s\n", level_str);
+    level = -1;
+  }
+
+  return level;
 }
 
 static void get_setting_from_string(AMLLogType_e type, const char *str) {
@@ -146,19 +145,29 @@ static void get_setting_from_string(AMLLogType_e type, const char *str) {
                     //printf("level:%s\n", buf);
                     //node->level = atoi(buf);
                     node->level = level_str_to_level(buf);
-                    node->next = NULL;
-                    if (newhead) {
-                        tail->next = node;
+                    if (node->level < 0) {
+                        regfree(&node->pattern);
+                        free(node);
                     } else {
-                        newhead = node;
+                        node->next = NULL;
+                        if (newhead) {
+                            tail->next = node;
+                        } else {
+                            newhead = node;
+                        }
+                        tail = node;
                     }
-                    tail = node;
                 }
                 key = p + 1;
             }
         }
         if (*p == '\0')
             break;
+    }
+
+    if (newhead == NULL) {
+      printf("not match log level setting\n");
+      return;
     }
 
     pthread_mutex_lock(&g_aml_log_lock);
@@ -241,14 +250,91 @@ void aml_trace_set_from_string(const char *str) {
     get_setting_from_string(AML_TRACE_LOG, str);
 }
 
+void aml_log_parse(void) {
+  char file_name[64];
+  FILE *file_fd = NULL;
+  int size = 0;
+  char *buf;
+
+  snprintf(file_name, sizeof(file_name), "/tmp/AML_LOG_%s", __progname);
+  file_fd = fopen(file_name, "r");
+  if (file_fd == NULL) {
+    return;
+  }
+
+  fseek(file_fd, 0, SEEK_END);
+  size = ftell(file_fd);
+  rewind(file_fd);
+
+  buf = (char*)calloc(1, sizeof(char)*size+1);
+  if (fread(buf, 1, size, file_fd) > 0) {
+    // printf("buf: %s\n", buf);
+    aml_log_set_from_string(buf);
+  }
+  free(buf);
+
+  fclose(file_fd);
+  return;
+}
+
+#define EVENT_SIZE  ( sizeof (struct inotify_event) )
+#define BUF_LEN     ( 16 * ( EVENT_SIZE + 16 ) )
+static void *aml_log_threadloop(void *arg) {
+  char file_name[64];
+  FILE *file_fd = NULL;
+  char buffer[BUF_LEN];
+  int notify_fd;
+  int watch_desc;
+  unsigned int watch_flag = IN_CLOSE_WRITE | IN_CREATE | IN_DELETE |
+                            IN_DELETE_SELF | IN_MOVE | IN_MOVE_SELF | IN_IGNORED;
+
+  (void)arg;
+
+  pthread_detach(pthread_self());
+
+  snprintf(file_name, sizeof(file_name), "/tmp/AML_LOG_%s", __progname);
+  file_fd = fopen(file_name, "a+");
+  if (file_fd) {
+    fclose(file_fd);
+    aml_log_parse();
+  }
+
+  notify_fd = inotify_init();
+  if (notify_fd < 0) {
+    perror("inotify_init");
+    pthread_exit(NULL);
+  }
+
+  watch_desc = inotify_add_watch(notify_fd, file_name, watch_flag);
+  if (watch_desc < 0) {
+    perror("inotify_add_watch");
+    pthread_exit(NULL);
+  }
+
+  while (1) {
+    if (read(notify_fd, buffer, BUF_LEN) < 0) {
+      printf("read error\n");
+    } else {
+      aml_log_parse();
+    }
+  }
+
+  pthread_exit(NULL);
+}
+
 static const char *log_level_name[] = {"ERR", "WARNING", "INFO", "DEBUG", "VERBOSE",
                                        "VV",  "VVV",  "",     "",      ""};
 
 static FILE *log_fp = NULL;
 void aml_log_set_output_file(FILE *fp) { log_fp = fp; }
+pthread_t aml_log_pthread_id = 0;
 
 void aml_log_msg(struct AmlLogCat *cat, int level, const char *file, const char *function,
                      int lineno, const char *fmt, ...) {
+    if (aml_log_pthread_id == 0) {
+      pthread_create(&aml_log_pthread_id, NULL, aml_log_threadloop, NULL);
+    }
+
     if (cat->next == NULL) {
         aml_log_add(cat);
         if (!AML_LOG_CAT_ENABLE(cat, level))
