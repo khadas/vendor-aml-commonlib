@@ -242,7 +242,24 @@ static void get_setting_from_string(AMLLogType_e type, const char *str) {
     }
 }
 
+static void aml_log_sync_config_file(const char *level_str) {
+  char file_name[64];
+  FILE *file_fd = NULL;
+
+  snprintf(file_name, sizeof(file_name), "/tmp/AML_LOG_%s", __progname);
+  file_fd = fopen(file_name, "w");
+  if (file_fd) {
+    //printf("output str \"%s\" to file %s\n", level_str, file_name);
+    fputs(level_str, file_fd);
+    fclose(file_fd);
+  }
+}
+
+char level_str[256] = {0};
 void aml_log_set_from_string(const char *str) {
+    if (!strncmp(level_str, str, strlen(str))) return;
+    strncpy(level_str, str, 256);
+    aml_log_sync_config_file(str);
     get_setting_from_string(AML_DEBUG_LOG, str);
 }
 
@@ -295,6 +312,14 @@ static void *aml_log_threadloop(void *arg) {
   snprintf(file_name, sizeof(file_name), "/tmp/AML_LOG_%s", __progname);
   file_fd = fopen(file_name, "a+");
   if (file_fd) {
+    int size = 0;
+
+    fseek(file_fd, 0, SEEK_END);
+    size = ftell(file_fd);
+    if (size == 0) {
+      //printf("output str \"all:LOG_ERR\" to file %s\n", file_name);
+      fputs("all:LOG_ERR", file_fd);
+    }
     fclose(file_fd);
     aml_log_parse();
   }
