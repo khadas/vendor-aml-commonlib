@@ -305,6 +305,19 @@ static const dongle_info dongle_registerd[] = {
 		0x0
 	},
 	{
+		"0000",
+		"8188fu",
+		"8188fu.ko",
+		REALTEK_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_IFNAME,
+			.ifname     = "wlan0",
+			.if2name    = "p2p0",
+		},
+		"rtl8188fu",
+		0xf179
+	},
+	{
 		"d723",
 		"8723ds",
 		"8723ds.ko",
@@ -593,8 +606,8 @@ static int print_devs(libusb_device **devs, int type)
 				fprintf(stderr, "found the match wifi is: %s", dongle_registerd[j].wifi_name);
 				memset(module_path, 0, sizeof(module_path));
 				memset(module_arg, 0, sizeof(module_arg));
-				sprintf(module_path, "%s/%s", dongle_registerd[i].wifi_module_path, dongle_registerd[i].wifi_module_filename);
-				get_module_arg(&dongle_registerd[i].wifi_module_arg, module_arg, type);
+				sprintf(module_path, "%s/%s", dongle_registerd[j].wifi_module_path, dongle_registerd[j].wifi_module_filename);
+				get_module_arg(&dongle_registerd[j].wifi_module_arg, module_arg, type);
 				fprintf(stderr, "[%s:%d]module_path(%s)\n", __func__, __LINE__, module_path);
 				fprintf(stderr, "[%s:%d]module_arg(%s)\n", __func__, __LINE__, module_arg);
 				insmod(module_path, module_arg);
