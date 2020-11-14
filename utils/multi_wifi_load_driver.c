@@ -318,6 +318,19 @@ static const dongle_info dongle_registerd[] = {
 		0xf179
 	},
 	{
+		"invalid",
+		"8188gtvu",
+		"8188gtvu.ko",
+		REALTEK_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_IFNAME,
+			.ifname     = "wlan0",
+			.if2name    = "p2p0",
+		},
+		"rtl8188gtv",
+		0x018c
+	},
+	{
 		"d723",
 		"8723ds",
 		"8723ds.ko",
