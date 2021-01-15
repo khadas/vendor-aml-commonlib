@@ -59,6 +59,7 @@ int usb_configure()
             //printf("content: %s\n", FileName);
             if(!strncmp("DISCONNECTED", (const char*)FileName, 12))
             {
+                usleep(200*1000);   //Delay 200ms
                 UDC_config();
                 //system("echo ff400000.dwc2_a > /sys/kernel/config/usb_gadget/amlogic/UDC");
                 ret = SUCCESS;
