@@ -22,6 +22,12 @@
 
 #define DEFAULT_KO_PATH     "/vendor/lib/modules"
 
+#ifdef MTK_MODULES_PATH
+#define MTK_KO_PATH     XSTR(MTK_MODULES_PATH)
+#else
+#define MTK_KO_PATH     DEFAULT_KO_PATH
+#endif
+
 #ifdef BROADCOM_MODULES_PATH
 #define BROADCOM_KO_PATH     XSTR(BROADCOM_MODULES_PATH)
 #else
@@ -407,6 +413,17 @@ static const dongle_info dongle_registerd[] = {
 		},
 		"rtl8822cs",
 		0x0
+	},
+	{
+		"7603",
+		"wlan_mt7663_sdio",
+		"wlan_mt7663_sdio.ko",
+		MTK_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_IFNAME,
+		},
+		"mtk7661s",
+		0xffff
 	},
 	{
 		"3030",
