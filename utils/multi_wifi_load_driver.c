@@ -46,6 +46,13 @@
 #define REALTEK_KO_PATH     DEFAULT_KO_PATH
 #endif
 
+#ifdef AMLOGIC_MODULES_PATH
+#define AMLOGIC_KO_PATH     XSTR(AMLOGIC_MODULES_PATH)
+#else
+#define AMLOGIC_KO_PATH     DEFAULT_KO_PATH
+#endif
+
+
 #define DEFAULT_CONFIG_PATH     "/vendor/etc/wifi"
 
 #ifdef BROADCOM_CONFIG_PATH
@@ -415,6 +422,20 @@ static const dongle_info dongle_registerd[] = {
 		0x0
 	},
 	{
+		"8888",
+		"aml_sdio",
+		"aml_sdio.ko",
+		AMLOGIC_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_IFNAME,
+		},
+		"w155s1",
+		0xffff,
+		"vlsicomm",
+		"vlsicomm.ko",
+		""
+	},
+	{
 		"7603",
 		"wlan_mt7663_sdio",
 		"wlan_mt7663_sdio.ko",
@@ -778,6 +799,11 @@ static int multi_wifi_load_driver(int type)
 
 	get_wifi_dev_type(dev_type);
 	sprintf(file_name, "/sys/bus/mmc/devices/%s:0001/%s:0001:1/device", dev_type, dev_type);
+	if (!sdio_wifi_load_driver(type)) {
+		return 0;
+	}
+	usleep(10000);
+	sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:0000:1/device", dev_type, dev_type);
 	if (!sdio_wifi_load_driver(type)) {
 		return 0;
 	}
