@@ -4,7 +4,7 @@ LOCAL_INCLUDES := -I. -Iinclude -I$(STAGING_DIR)/usr/include
 LOCAL_LIBS := -L$(STAGING_DIR)/usr/lib -lpthread
 LOCAL_DEFINES := -DHAVE_PTHREADS -DHAVE_ANDROID_OS=1
 
-CFLAGS += -fPIC -Wall -Wno-unknown-pragmas -Wno-format -O3 -g
+CFLAGS += -fPIC -Wall -Wno-unknown-pragmas -Wno-format -O3 -g -Wno-error=format-security
 CFLAGS += $(LOCAL_INCLUDES) $(LOCAL_DEFINES)
 
 LDFLAGS += $(LOCAL_LIBS)
