@@ -4,11 +4,15 @@ LIB = libbootloader_message.a
 #bootloader_message.o: bootloader_message.c
 #	$(CC) -c bootloader_message.c
 
-all: urlmisc bootloader_message.o
+all: urlmisc bootloader_message.o test_ab
 	$(AR) rc $(LIB) bootloader_message.o
 
 urlmisc: urlmisc.o bootloader_message.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+
+test_ab : test.o bootloader_message.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+
 
 clean:
 	rm -f *.o $(LIB)

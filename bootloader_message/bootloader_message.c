@@ -8,7 +8,6 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdint.h>
-#include <zlib.h>
 #include <mtd/mtd-user.h>
 
 #include "bootloader_message.h"
@@ -722,6 +721,7 @@ int get_active_slot_from_misc(int *slot) {
     }
 
     memcpy(&bootinfo, info.slot_suffix, SLOTBUF_SIZE);
+    printf("func:%s, active=%s\n",__FUNCTION__, bootinfo.active_slot ? "_b" : "_a");
     *slot = bootinfo.active_slot;
     return 0;
 }
@@ -744,8 +744,10 @@ int set_active_slot(int slot) {
     memcpy(&bootinfo, info.slot_suffix, SLOTBUF_SIZE);
     if (slot == 0) {
         memcpy(bootinfo.bootctrl_suffix, "_a", 2);
+	printf("set_active_slot: _a\n");
     } else {
         memcpy(bootinfo.bootctrl_suffix, "_b", 2);
+	printf("set_active_slot: _b\n");
     }
     bootinfo.active_slot = slot;
     memcpy(info.slot_suffix, &bootinfo, SLOTBUF_SIZE);
