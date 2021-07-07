@@ -427,13 +427,13 @@ static const dongle_info dongle_registerd[] = {
 		"aml_sdio.ko",
 		AMLOGIC_KO_PATH,
 		.wifi_module_arg = {
-			.arg_type   = MODULE_ARG_IFNAME,
+			.arg_type = MODULE_ARG_IFNAME,
 		},
 		"w155s1",
 		0xffff,
 		"vlsicomm",
 		"vlsicomm.ko",
-		""
+		"country_code=WW conf_path=/etc/wifi/w1 vmac1=wlan1 vif1opmode=2 con_mode=0x06 plt_ver=gva"
 	},
 	{
 		"7603",
@@ -794,18 +794,19 @@ static int sdio_wifi_load_driver(int type)
 
 static int multi_wifi_load_driver(int type)
 {
-	int wait_time = 0, ret;
+	int wait_time = 0, ret,i;
 	char dev_type[10] = {'\0'};
 
 	get_wifi_dev_type(dev_type);
-	sprintf(file_name, "/sys/bus/mmc/devices/%s:0001/%s:0001:1/device", dev_type, dev_type);
-	if (!sdio_wifi_load_driver(type)) {
-		return 0;
-	}
-	usleep(10000);
-	sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:0000:1/device", dev_type, dev_type);
-	if (!sdio_wifi_load_driver(type)) {
-		return 0;
+
+	for (i = 0; i < 2; i++)
+	{
+		sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:000%d:1/device", dev_type, dev_type, i);
+
+		if (!sdio_wifi_load_driver(type)) {
+			return 0;
+		}
+		usleep(10000);
 	}
 	fprintf(stderr, "wait usb ok\n");
 	do {
@@ -840,17 +841,24 @@ static int wifi_off(void)
 	int i;
 	char dev_type[10] = {'\0'};
 	char sdio_buf[128];
-
+	FILE *fp;
 	get_wifi_dev_type(dev_type);
-	sprintf(file_name, "/sys/bus/mmc/devices/%s:0001/%s:0001:1/device", dev_type, dev_type);
-	FILE *fp = fopen(file_name, "r");
+	
+	for (i = 0; i < 2; i++) {
+		sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:000%d:1/device", dev_type, dev_type, i);
 
-	if (!fp) {
-		fprintf(stderr, "open sdio wifi file failed\n");
+		fp = fopen(file_name, "r");
 
-		return -1;
+		if (fp > 0) {
+			break;
+		}
+		else {
+			fprintf(stderr, "open sdio wifi file failed\n");
+			continue;
+		}
 	}
-
+	if (i == 2)
+		return -1;
 	memset(sdio_buf, 0, sizeof(sdio_buf));
 	if (fread(sdio_buf, 1, 128, fp) < 1) {
 		fclose(fp);
@@ -867,9 +875,13 @@ static int wifi_off(void)
 	}
 
 	usleep(200000); /* allow to finish interface down */
-	rmmod(dongle_registerd[load_dongle_index].wifi_module_name);
-	if (dongle_registerd[load_dongle_index].wifi_module_name2)
+	
+	if (dongle_registerd[load_dongle_index].wifi_module_name2) {
 		rmmod(dongle_registerd[load_dongle_index].wifi_module_name2);
+		set_wifi_power(SDIO_POWER_DOWN);
+		return 0;
+	}
+	rmmod(dongle_registerd[load_dongle_index].wifi_module_name);
 	usleep(500000);
 	set_wifi_power(SDIO_POWER_DOWN);
 
