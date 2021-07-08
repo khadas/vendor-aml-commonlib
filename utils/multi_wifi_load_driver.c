@@ -801,7 +801,7 @@ static int multi_wifi_load_driver(int type)
 
 	for (i = 0; i < 2; i++)
 	{
-		sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:000%d:1/device", dev_type, dev_type, i);
+		sprintf(file_name, "/sys/bus/mmc/devices/%s:000%d/%s:000%d:1/device", dev_type,i , dev_type, i);
 
 		if (!sdio_wifi_load_driver(type)) {
 			return 0;
@@ -843,9 +843,9 @@ static int wifi_off(void)
 	char sdio_buf[128];
 	FILE *fp;
 	get_wifi_dev_type(dev_type);
-	
+
 	for (i = 0; i < 2; i++) {
-		sprintf(file_name, "/sys/bus/mmc/devices/%s:0000/%s:000%d:1/device", dev_type, dev_type, i);
+		sprintf(file_name, "/sys/bus/mmc/devices/%s:000%d/%s:000%d:1/device", dev_type,i , dev_type, i);
 
 		fp = fopen(file_name, "r");
 
