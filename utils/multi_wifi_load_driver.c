@@ -79,6 +79,18 @@
 #define QCA_KO_PATH     DEFAULT_CONFIG_PATH
 #endif
 
+#ifdef ICOMM_MODULES_PATH
+#define ICOMM_KO_PATH     XSTR(ICOMM_MODULES_PATH)
+#else
+#define ICOMM_KO_PATH     DEFAULT_KO_PATH
+#endif
+
+#ifdef ICOMM_CONFIG_PATH
+#define ICOMM_STACFG_PATH     XSTR(ICOMM_CONFIG_PATH)
+#else
+#define ICOMM_STACFG_PATH     DEFAULT_CONFIG_PATH
+#endif
+
 #define MODULE_ARG_FIRMWARE     0
 #define MODULE_ARG_IFNAME       1
 #define MODULE_ARG_STACFG       2
@@ -509,6 +521,18 @@ static const dongle_info dongle_registerd[] = {
 		},
 		"qca6174",
 		0x0,
+	},
+	{
+		"2060",
+		"ssv6x5x",
+		"sv6158.ko",
+		ICOMM_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type   = MODULE_ARG_STACFG,
+			.stacfgpath = "sv6158-wifi.cfg",
+		},
+		"sv6158",
+		0x0
 	}
 };
 
@@ -534,7 +558,7 @@ static void get_module_arg(const module_arg *arg, char *str, int type)
 		break;
 	}
 	case MODULE_ARG_STACFG: {
-		sprintf(str, "stacfgpath=%s", arg->stacfgpath);
+		sprintf(str, "stacfgpath=%s/%s", ICOMM_STACFG_PATH, arg->stacfgpath);
 		break;
 	}
 	case MODULE_ARG_OTHER: {
@@ -660,6 +684,53 @@ static int get_wifi_dev_type(char *dev_type)
 	return 0;
 }
 
+static int set_sdio_clock_always_on()
+{
+	char *sdio_clk_always_on_file = "/sys/class/aml_wifi/sdio_clk_always_on";
+	FILE *fp = NULL;
+	int ret = 0;
+
+	fp = fopen(sdio_clk_always_on_file, "w");
+	if (fp) {
+		ret = fputc('1', fp);
+		if (ret < 0)
+			fprintf(stderr, "fputc %s failed!\n", sdio_clk_always_on_file);
+		fclose(fp);
+	}
+	return ret;
+}
+
+static int set_rtk_wifi_mac(char *module_arg)
+{
+	char wifimac[32];
+	char *wifimac_fileName = "/sys/module/kernel/parameters/wifimac";
+	FILE *wifimac_fp = NULL;
+	int ret = -1;
+
+	if (!module_arg)
+		return ret;
+
+	memset(wifimac, 0 ,sizeof(wifimac));
+	wifimac_fp = fopen(wifimac_fileName, "r");
+	if (wifimac_fp) {
+		if (fread(wifimac, 1, sizeof(wifimac) - 1, wifimac_fp) > 0) {
+			if (strlen(wifimac) > 0 && wifimac[strlen(wifimac) - 1] == '\n') {
+				wifimac[strlen(wifimac) - 1] = '\0';
+			}
+			if (strlen(wifimac) > 0 && strstr(wifimac, "(null)") == NULL) {
+				if (snprintf(module_arg + strlen(module_arg),
+					sizeof(module_arg) - strlen(module_arg) - 1,
+					" rtw_initmac=%s", wifimac) > 0)
+				ret = 0;
+			}
+		}
+		fclose(wifimac_fp);
+	} else
+		fprintf(stderr, "fopen %s failed!\n", wifimac_fileName);
+
+	return ret;
+}
+
 static int print_devs(libusb_device **devs, int type)
 {
 	libusb_device *dev;
@@ -751,28 +822,16 @@ static int sdio_wifi_load_driver(int type)
 			memset(module_arg, 0, sizeof(module_arg));
 			sprintf(module_path, "%s/%s", dongle_registerd[i].wifi_module_path, dongle_registerd[i].wifi_module_filename);
 			get_module_arg(&dongle_registerd[i].wifi_module_arg, module_arg, type);
+#ifdef RTK_WIFI_MODULE
+			set_rtk_wifi_mac(module_arg);
+#endif
 			fprintf(stderr, "[%s:%d]module_path(%s)\n", __func__, __LINE__, module_path);
 			fprintf(stderr, "[%s:%d]module_arg(%s)\n", __func__, __LINE__, module_arg);
-#ifdef RTK_WIFI_MODULE
-			char wifimac[32];
-			char *wifimac_fileName = "/sys/module/kernel/parameters/wifimac";
-			FILE *wifimac_fp = NULL;
-			memset(wifimac, 0 ,sizeof(wifimac));
-			wifimac_fp = fopen(wifimac_fileName, "r");
-			if (wifimac_fp) {
-				if (fread(wifimac, 1, sizeof(wifimac) - 1, wifimac_fp) > 0) {
-					if (strlen(wifimac) > 0 && wifimac[strlen(wifimac) - 1] == '\n') {
-						wifimac[strlen(wifimac) - 1] = '\0';
-					}
-					if (strlen(wifimac) > 0 && strstr(wifimac, "(null)") == NULL) {
-						snprintf(module_arg + strlen(module_arg),
-							sizeof(module_arg) - strlen(module_arg) - 1,
-							" rtw_initmac=%s", wifimac);
-					}
-				}
-				fclose(wifimac_fp);
+			if (strstr(dongle_registerd[i].wifi_name,"sv6158")) {
+				rmmod(dongle_registerd[i].wifi_module_name);
+				set_sdio_clock_always_on();
 			}
-#endif
+
 			insmod(module_path, module_arg);
 
 			if (dongle_registerd[i].wifi_module_name2) {
