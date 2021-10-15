@@ -30,11 +30,29 @@ int UDC_config()
     fp = fopen(USB_CONFIG_ADB_UDC, "wb");
     if (fp != NULL)
     {
-        //printf("udc config data!\n");
-        if ( fputs(UdcValue, fp) < 0)
-            printf("udc config data failure\n");
-        sync();
-        fclose(fp);
+      //printf("udc config data!\n");
+      if ( fputs("none", fp) < 0)
+        printf("udc config data failure\n");
+      fclose(fp);
+    }
+    fp = NULL;
+    fp = fopen(USB_CONFIG_ADB_UDC, "wb");
+    if (fp != NULL)
+    {
+      //printf("udc config data!\n");
+      if ( fputs(UdcValue, fp) < 0)
+        printf("udc config data failure\n");
+      fclose(fp);
+    }
+    fp = NULL;
+
+    fp = fopen(USB_CONFIG_ADB_UDC, "wb");
+    if (fp != NULL)
+    {
+      //printf("udc config data!\n");
+      if ( fputs(UdcValue, fp) < 0)
+        printf("udc config data failure\n");
+      fclose(fp);
     }
     fp = NULL;
     return 0;
@@ -103,7 +121,7 @@ int main(void)
         }
         /* receive data */
         rcvlen = recv(Usbmonitor, &buf, sizeof(buf), 0);
-        if (rcvlen > 0) {
+        if (rcvlen > 0 && strstr(buf,"usb") ) {
           //printf("%s\n", buf);
           usb_configure();
         }
