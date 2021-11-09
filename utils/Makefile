@@ -1,4 +1,4 @@
-UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor
+UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor simulate_key
 .PHONY: all install clean
 #CFLAGS += $(AML_UTIL_PRIV_FLAGS)
 
@@ -29,6 +29,9 @@ usbpower_mx_iddq: usbpower_mx_iddq.cpp usbctrl_mx_iddq.cpp
 
 usb_monitor: usb_monitor.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+
+simulate_key: simulate_key.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -D IR_REMOTE_DEVICE=\"$(IR_REMOTE_DEVICE)\" -o $@ $^ $(LDLIBS)
 
 all: $(UTILS)
 
