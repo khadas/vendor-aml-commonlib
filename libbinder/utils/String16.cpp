@@ -48,9 +48,11 @@ void initialize_string16()
 
 void terminate_string16()
 {
-    SharedBuffer::bufferFromData(gEmptyString)->release();
-    gEmptyStringBuf = NULL;
-    gEmptyString = NULL;
+    if (gEmptyString!= NULL )  {
+        SharedBuffer::bufferFromData(gEmptyString)->release();
+        gEmptyStringBuf = NULL;
+        gEmptyString = NULL;
+    }
 }
 
 // ---------------------------------------------------------------------------

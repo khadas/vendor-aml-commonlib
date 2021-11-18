@@ -72,9 +72,11 @@ void initialize_string8()
 
 void terminate_string8()
 {
-    SharedBuffer::bufferFromData(gEmptyString)->release();
-    gEmptyStringBuf = NULL;
-    gEmptyString = NULL;
+    if (gEmptyString!= NULL )  {
+        SharedBuffer::bufferFromData(gEmptyString)->release();
+        gEmptyStringBuf = NULL;
+        gEmptyString = NULL;
+    }
 }
 
 // ---------------------------------------------------------------------------
