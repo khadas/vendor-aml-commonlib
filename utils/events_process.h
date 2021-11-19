@@ -13,15 +13,16 @@ class EventsProcess {
     struct KeyMapItem_t {
         const char* type;
         int value;
+        int mode;
     };
     EventsProcess();
     virtual ~EventsProcess() { }
     virtual void Init();
     virtual void WaitKey();
 //    virtual void KeyLongPress(int key);
-    
+
 protected:
-    void EnqueueKey(int key_code);
+    void EnqueueKey(int key_code, bool flag);
 private:
     pthread_mutex_t key_queue_mutex;
     pthread_cond_t key_queue_cond;
@@ -39,6 +40,7 @@ private:
       int keyCode;
       int keyState;
       bool longPress;
+      bool curlongPress;
     };
     std::vector<KeyEvent *> mKeyEventVec;
 
@@ -68,6 +70,7 @@ private:
 //    void time_key(int key_code, int count);
     void time_key(key_timer_t *info);
     const char* getKeyType(int key);
+    int getKeyMode(int key);
     void load_key_map();
     int getMapKey(int key);
     uint64_t getSystemTimeUs();

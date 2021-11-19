@@ -95,7 +95,7 @@ uint64_t EventsProcess::getSystemTimeUs() {
 
 void EventsProcess::ProcessKey(int key_code, int value) {
     bool register_key = false;
-
+    bool flag = false;
     pthread_mutex_lock(&key_queue_mutex);
     key_pressed[key_code] = value;
     if (value == 1) {/*1:key down*/
@@ -104,6 +104,7 @@ void EventsProcess::ProcessKey(int key_code, int value) {
         ke->keyCode = key_code;
         ke->keyState = value; /*key down*/
         ke->longPress = false;
+        ke->curlongPress = false;
         mKeyEventVec.push_back(ke);
 
         ++key_down_count;
@@ -123,6 +124,10 @@ void EventsProcess::ProcessKey(int key_code, int value) {
             if ((*iter)->keyCode == key_code && (*iter)->keyState == 1) {
                 (*iter)->up_ts_us = getSystemTimeUs();
                 (*iter)->keyState = value; /*key up*/
+                if ((*iter)->longPress || (*iter)->curlongPress) {
+                    (*iter)->curlongPress = false;
+                    flag = true;
+                }
                 break;
             }
         }
@@ -135,7 +140,7 @@ void EventsProcess::ProcessKey(int key_code, int value) {
     pthread_mutex_unlock(&key_queue_mutex);
     last_key = key_code;
     if (register_key) {
-        EnqueueKey(key_code);
+        EnqueueKey(key_code, flag);
     }
 }
 
@@ -149,14 +154,24 @@ void* EventsProcess::time_key_helper(void* cookie) {
 void EventsProcess::time_key(key_timer_t *info) {
     int key_code = info->key_code;
     int count = info->count;
-
+    int keymode = getKeyMode(key_code);
     usleep(750000);  // 750 ms == "long"
     pthread_mutex_lock(&key_queue_mutex);
     if (key_last_down == key_code && key_down_count == count) {
-        if (info->ke)
+        if (info->ke) {
             info->ke->longPress = true;
+            if (keymode != 0)
+                info->ke->curlongPress = true;
+        }
     }
-    pthread_mutex_unlock(&key_queue_mutex);
+    if (info->ke->longPress && info->ke->curlongPress) {
+        pthread_mutex_unlock(&key_queue_mutex);
+        while (key_last_down == key_code && key_down_count == count) {
+            EnqueueKey(key_code, false);
+        }
+    } else {
+        pthread_mutex_unlock(&key_queue_mutex);
+    }
 }
 
 
@@ -169,6 +184,17 @@ const char* EventsProcess::getKeyType(int key) {
     }
 
     return NULL;
+}
+
+int EventsProcess::getKeyMode(int key) {
+    int i;
+    for (i = 0; i < num_keys; i++) {
+        KeyMapItem_t* v = &keys_map[i];
+        if (v->value == key)
+            return v->mode;
+    }
+
+    return 0;
 }
 
 void EventsProcess::load_key_map() {
@@ -190,6 +216,7 @@ void EventsProcess::load_key_map() {
             char* original = strdup(buffer);
             char* type = strtok(original+i, " \t\n");
             char* key = strtok(NULL, " \t\n");
+            char* mode = strtok(NULL, " \t\n");
             value = atoi (key);
             if (type && key && (value > 0)) {
                 while (num_keys >= alloc) {
@@ -198,6 +225,10 @@ void EventsProcess::load_key_map() {
                 }
                 keys_map[num_keys].type = strdup(type);
                 keys_map[num_keys].value = value;
+                if (!mode)
+                    keys_map[num_keys].mode = 0;
+                else
+                    keys_map[num_keys].mode = atoi (mode);
 
                 ++num_keys;
             } else {
@@ -217,7 +248,7 @@ void EventsProcess::load_key_map() {
     int i;
     for (i = 0; i < num_keys; ++i) {
         KeyMapItem_t* v = &keys_map[i];
-        printf("  %d type:%s value:%d\n", i, v->type, v->value);
+        printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
     }
 }
 
@@ -249,14 +280,14 @@ long checkEventTime(struct timeval *before, struct timeval *later) {
     return false;
 }
 
-void EventsProcess::EnqueueKey(int key_code) {
+void EventsProcess::EnqueueKey(int key_code, bool flag) {
     struct timeval now;
     gettimeofday(&now, nullptr);
 
     pthread_mutex_lock(&key_queue_mutex);
     const int queue_max = sizeof(key_queue) / sizeof(key_queue[0]);
     if (key_queue_len < queue_max) {
-        if (last_key != key_code || checkEventTime(&last_queue_time, &now)) {
+        if (last_key != key_code || checkEventTime(&last_queue_time, &now) || flag) {
             key_queue[key_queue_len++] = key_code;
             last_queue_time = now;
         }
@@ -266,6 +297,8 @@ void EventsProcess::EnqueueKey(int key_code) {
 }
 
 void EventsProcess::WaitKey() {
+    bool cur_longpress = false;
+    bool execute = false;
     pthread_mutex_lock(&key_queue_mutex);
 
     do {
@@ -294,9 +327,12 @@ void EventsProcess::WaitKey() {
     std::vector<KeyEvent *>::iterator iter = mKeyEventVec.begin();
     //should remove zombie key down long long time?
     for (; iter != mKeyEventVec.end();) {
-        if ((*iter)->keyCode == key && (*iter)->keyState == 0) {
+        if ((*iter)->keyCode == key && ((*iter)->keyState == 0 || (*iter)->curlongPress)) {
             keyEvent = *iter;
-            iter = mKeyEventVec.erase(iter);
+            if (keyEvent->curlongPress)
+                cur_longpress = true;
+            else
+                iter = mKeyEventVec.erase(iter);
             break;
         } else {
             ++iter;
@@ -305,10 +341,14 @@ void EventsProcess::WaitKey() {
 
     pthread_mutex_unlock(&key_queue_mutex);
     const char* keyType=getKeyType(key);
+    int keymode=getKeyMode(key);
     int res;
     memset(buf,'\0',sizeof(buf));
     if (keyType != NULL) {
-        if (keyEvent && keyEvent->longPress) {
+        if (keyEvent && cur_longpress && keyEvent->longPress && keymode != 0) {
+            sprintf(buf,"%s %s%s","/etc/adckey/adckey_function.sh","curlongpress",keyType);
+            execute = true;
+        } else if (keyEvent && !cur_longpress && keyEvent->longPress && keymode != 1) {
             uint64_t duration = 0;
             if (keyEvent->up_ts_us < keyEvent->down_ts_us) {
                 duration = UINT64_MAX - keyEvent->down_ts_us + keyEvent->up_ts_us;
@@ -318,14 +358,19 @@ void EventsProcess::WaitKey() {
             }
 
             sprintf(buf,"%s %s%s %llu","/etc/adckey/adckey_function.sh","longpress",keyType, duration);
-        } else {
+            execute = true;
+        } else if (!(keyEvent && keyEvent->longPress)) {
             sprintf(buf,"%s %s","/etc/adckey/adckey_function.sh",keyType);
+            execute = true;
         }
-        printf("input_eventd: run %s\n", buf);
-        res=system(buf);
-        if (res != 0) printf("run %s exception!!!\n",buf);
+        if (execute) {
+            //printf("input_eventd: run %s\n", buf);
+            res=system(buf);
+            if (res != 0) printf("run %s exception!!!\n",buf);
+        }
     }
 
     //release
-    delete keyEvent;
+    if (!cur_longpress)
+        delete keyEvent;
 }
