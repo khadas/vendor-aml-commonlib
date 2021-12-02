@@ -223,7 +223,8 @@ int bootenv_set_value(const char * key,  const char * value,int creat_args_flag)
         attr =(env_attribute *)malloc(sizeof(env_attribute));
         last->next = attr;
         memset(attr, 0, sizeof(env_attribute));
-        strcpy(attr->key,key);
+        strncpy(attr->key,key,sizeof(attr->key)-1);
+        attr->key[sizeof(attr->key)-1] = '\0';
         attr->value = (char *)malloc(strlen(value)+1);
         memset(attr->value,0,strlen(value)+1);
         strcpy(attr->value,value);
@@ -283,6 +284,9 @@ int save_bootenv() {
         if (err < 0) {
             ERROR ("[ubootenv] MEMERASE ERROR %d\n",err);
             close(fd);
+            if (info.erasesize > ENV_PARTITIONS_SIZE) {
+            free(data);
+            }
             return  -2;
         }
 
@@ -455,6 +459,7 @@ int bootenv_init(void) {
         ENV_EASER_SIZE  = info.erasesize;//0x20000;//128K
         ENV_PARTITIONS_SIZE = info.size;//0x8000;
         ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(long);
+        close(fd);
     }
 
     while (i < MAX_UBOOT_RWRETRY && ret < 0) {
