@@ -97,6 +97,7 @@ EventTagMap* android_openEventTagMap(const char* fileName)
     if (processFile(newTagMap) != 0)
         goto fail;
 
+    close(fd);
     return newTagMap;
 
 fail:
