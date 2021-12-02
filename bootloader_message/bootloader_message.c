@@ -472,6 +472,7 @@ static int get_bootloader_message_block(struct bootloader_message *out) {
     int count = fread(&temp, sizeof(temp), 1, f);
     if (count != 1) {
         printf("Failed reading %s\n(%s)\n", misc_device, strerror(errno));
+        fclose(f);
         return -1;
     }
     if (fclose(f) != 0) {
@@ -494,6 +495,7 @@ static int set_bootloader_message_block(const struct bootloader_message *in) {
     int count = fwrite(in, sizeof(*in), 1, f);
     if (count != 1) {
         printf("Failed writing %s\n(%s)\n", misc_device, strerror(errno));
+        fclose(f);
         return -1;
     }
     if (fclose(f) != 0) {
@@ -595,10 +597,16 @@ int set_recovery_otapath(char *path) {
         printf("get_bootloader_message failed!\n");
         return -1;
     }
+    if (NULL ==  path) {
+        printf("set_recovery_otapath path is error!\n");
+        return -1;
+    }
 
-    memcpy(info.command, CMD_RUN_RECOVERY, sizeof(CMD_RUN_RECOVERY));
-    memset(info.recovery, 0, RECOVERYBUF_SIZE);
-    memcpy(info.recovery, path, strlen(path));
+    strncpy(info.command, CMD_RUN_RECOVERY, sizeof(info.command) - 1);
+    info.command[sizeof(info.command) - 1] = '\0';
+    memset(info.recovery, 0, sizeof(info.recovery));
+    strncpy(info.recovery, path, sizeof(info.recovery) - 1);
+    info.recovery[sizeof(info.recovery) - 1] = '\0';
 
     ret = set_bootloader_message(&info);
     if (ret != 0) {
@@ -685,7 +693,7 @@ int get_active_slot_from_cmdline(int *slot) {
         return -1;
     }
 
-    int len = read(fd, buffer, 1024);
+    int len = read(fd, buffer, sizeof(buffer) - 1);
     if (len < 0) {
         printf("read cmdline failed!\n");
         close(fd);
@@ -693,6 +701,7 @@ int get_active_slot_from_cmdline(int *slot) {
     }
 
     close(fd);
+    buffer[sizeof(buffer) - 1]  = '\0';
     p = strstr(buffer, "slot_suffix");
     if (p == NULL) {
         printf("can not get slot from cmdline!\n");
