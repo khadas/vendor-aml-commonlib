@@ -714,6 +714,7 @@ static int set_rtk_wifi_mac(char *module_arg)
 	wifimac_fp = fopen(wifimac_fileName, "r");
 	if (wifimac_fp) {
 		if (fread(wifimac, 1, sizeof(wifimac) - 1, wifimac_fp) > 0) {
+			wifimac[sizeof(wifimac) - 1] = '\0';
 			if (strlen(wifimac) > 0 && wifimac[strlen(wifimac) - 1] == '\n') {
 				wifimac[strlen(wifimac) - 1] = '\0';
 			}
@@ -807,12 +808,12 @@ static int sdio_wifi_load_driver(int type)
 	}
 
 	memset(sdio_buf, 0, sizeof(sdio_buf));
-	if (fread(sdio_buf, 1, 128, fp) < 1) {
+	if (fread(sdio_buf, 1, sizeof(sdio_buf)-1, fp) < 1) {
 		fclose(fp);
 
 		return -1;
 	}
-
+	sdio_buf[sizeof(sdio_buf)-1] = '\0';
 	fclose(fp);
 	for (i = 0; i < (int)(ARRAY_SIZE(dongle_registerd)); i++) {
 		if (strstr(sdio_buf, dongle_registerd[i].chip_id)) {

@@ -83,8 +83,8 @@ int usb_configure()
                 ret = SUCCESS;
                 //printf("config usb successfull!\n");
             }
+             fclose(fp);
         }
-        fclose(fp);
     }
     else
         ret = ERROR_USB_CONFIG_ADB;
@@ -100,12 +100,21 @@ int main(void)
     fd_set fds;
     int buffersize = 1024;
     Usbmonitor = socket(AF_NETLINK, SOCK_RAW, NETLINK_KOBJECT_UEVENT);
+    if (0 > Usbmonitor) {
+      return -1;
+    }
     memset(&client, 0, sizeof(client));
     client.nl_family = AF_NETLINK;
     client.nl_pid = getpid();
     client.nl_groups = 1; /* receive broadcast message*/
-    setsockopt(Usbmonitor, SOL_SOCKET, SO_RCVBUF, &buffersize, sizeof(buffersize));
-    bind(Usbmonitor, (struct sockaddr*)&client, sizeof(client));
+    ret = setsockopt(Usbmonitor, SOL_SOCKET, SO_RCVBUF, &buffersize, sizeof(buffersize));
+    if (0 > ret) {
+      return -1;
+    }
+    ret = bind(Usbmonitor, (struct sockaddr*)&client, sizeof(client));
+    if (0 > ret) {
+      return -1;
+    }
     while (1) {
         char buf[UEVENT_BUFFER_SIZE] = { 0 };
         FD_ZERO(&fds);

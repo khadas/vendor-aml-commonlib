@@ -22,6 +22,7 @@ void set_wifi_power(int on)
             if (ioctl(fd,SDIO_POWER_DOWN)<0) {
                 if (ioctl(fd,USB_POWER_DOWN) < 0) {
                     printf("Set Wi-Fi power down error!!!\n");
+                    close(fd);
                     return;
                 }
             }
@@ -29,12 +30,14 @@ void set_wifi_power(int on)
             if (ioctl(fd,SDIO_POWER_UP) < 0) {
                 if (ioctl(fd,USB_POWER_UP) < 0) {
                     printf("Set Wi-Fi power up error!!!\n");
+                    close(fd);
                     return;
                 }
             }
         } else if (on == 2) {
             if (ioctl(fd, SDIO_GET_DEV_TYPE, dev_type) < 0) {
                 printf("Set Wi-Fi power up error!!!\n");
+                close(fd);
                 return;
             } else
                 printf("inf=%s\n", dev_type);
