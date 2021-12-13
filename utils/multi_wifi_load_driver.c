@@ -155,7 +155,7 @@ static const dongle_info dongle_registerd[] = {
 			.arg_type       = MODULE_ARG_FIRMWARE,
 			.firmware_path  = "AP6398/fw_bcm4359c0_ag.bin",
 			.firmware_ap_path  = "AP6398/fw_bcm4359c0_ag_apsta.bin",
-			.nvram_path     = "AP6398/nvram.txt",
+			.nvram_path     = "AP6398/nvram_ap6398s.txt",
 		},
 		"ap6398",
 		0x0
