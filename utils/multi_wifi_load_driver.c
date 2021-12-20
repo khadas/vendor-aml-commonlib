@@ -898,7 +898,7 @@ static int wifi_on(int type)
 
 static int wifi_off(void)
 {
-	int i;
+	int i, j, ret;
 	char dev_type[10] = {'\0'};
 	char sdio_buf[128];
 	FILE *fp;
@@ -906,36 +906,60 @@ static int wifi_off(void)
 
 	for (i = 0; i < 2; i++) {
 		sprintf(file_name, "/sys/bus/mmc/devices/%s:000%d/%s:000%d:1/device", dev_type,i , dev_type, i);
-
 		fp = fopen(file_name, "r");
-
 		if (fp > 0) {
 			break;
-		}
-		else {
+		} else {
 			fprintf(stderr, "open sdio wifi file failed\n");
 			continue;
 		}
 	}
-	if (i == 2)
-		return -1;
-	memset(sdio_buf, 0, sizeof(sdio_buf));
-	if (fread(sdio_buf, 1, 128, fp) < 1) {
+
+	if (i != 2) {
+		memset(sdio_buf, 0, sizeof(sdio_buf));
+		ret = fread(sdio_buf, 1, 128, fp);
 		fclose(fp);
+		if (ret < 1)
+			return -1;
+		for (i = 0; i < (int)(ARRAY_SIZE(dongle_registerd)); i++) {
+			if (strstr(sdio_buf, dongle_registerd[i].chip_id)) {
+				load_dongle_index = i;
+				break;
+			}
+		}
+	} else {
+		libusb_device **devs;
+		libusb_device *dev;
+		i = 0;
 
-		return -1;
-	}
+		ret = libusb_init(NULL);
+		if (ret < 0)
+			return ret;
 
-	fclose(fp);
-	for (i = 0; i < (int)(ARRAY_SIZE(dongle_registerd)); i++) {
-		if (strstr(sdio_buf, dongle_registerd[i].chip_id)) {
-			load_dongle_index = i;
-			break;
+		ret  = libusb_get_device_list(NULL, &devs);
+		if (ret  < 0)
+			return -1;
+		while ((dev = devs[i++]) != NULL) {
+			struct libusb_device_descriptor desc;
+			ret = libusb_get_device_descriptor(dev, &desc);
+			if (ret < 0) {
+				fprintf(stderr, "failed to get device descriptor\n");
+				return -1;
+			}
+
+			for (j = 0; j < (int)(ARRAY_SIZE(dongle_registerd)); j++) {
+				if (dongle_registerd[j].wifi_pid == desc.idProduct) {
+					load_dongle_index = j;
+				}
+			}
 		}
 	}
 
+	if (load_dongle_index == -1)
+		return -1;
 	usleep(200000); /* allow to finish interface down */
-	
+	fprintf(stdout, "found the match wifi is: %s", dongle_registerd[load_dongle_index].wifi_name);
+
 	if (dongle_registerd[load_dongle_index].wifi_module_name2) {
 		rmmod(dongle_registerd[load_dongle_index].wifi_module_name2);
 		set_wifi_power(SDIO_POWER_DOWN);
