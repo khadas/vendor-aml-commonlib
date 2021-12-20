@@ -7,6 +7,7 @@ void usage() {
         printf("eg:urlmisc write http://xx.28.xx.53:8080/otaupdate/swupdate/software.swu\n");
         printf("     urlmisc read\n");
         printf("     urlmisc clean\n");
+        printf("     urlmisc local\n");
 }
 
 int main(int argc, char **argv) {
@@ -42,6 +43,12 @@ int main(int argc, char **argv) {
             ret = clean_recovery_otapath();
             if (ret != 0) {
                 printf("clean otapath failed!\n");
+                return -1;
+             }
+        } else if (!strcmp(argv[1], "local")) {
+            ret = set_recovery();
+            if (ret != 0) {
+                printf("set local failed!\n");
                 return -1;
             }
         } else {
