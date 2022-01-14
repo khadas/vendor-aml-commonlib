@@ -296,6 +296,29 @@ void EventsProcess::EnqueueKey(int key_code, bool flag) {
     pthread_mutex_unlock(&key_queue_mutex);
 }
 
+#ifdef FILTER_POWERKEY
+bool filter_power_key(const char* key_type)
+{
+#define FILTER_KEY_TIME 150   //ms
+    static long last_time_ms = -1;
+
+    if (!strcmp(key_type, "power")) {
+        struct timeval now_time;
+        gettimeofday(&now_time, nullptr);
+        long now_time_ms = now_time.tv_sec*1000 + now_time.tv_usec/1000;
+        if (last_time_ms == -1 || (now_time_ms - last_time_ms) >= FILTER_KEY_TIME) {
+            last_time_ms = now_time_ms;
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        return true;
+    }
+#undef FILTER_KEY_TIME
+}
+#endif
+
 void EventsProcess::WaitKey() {
     bool cur_longpress = false;
     bool execute = false;
@@ -361,7 +384,11 @@ void EventsProcess::WaitKey() {
             execute = true;
         } else if (!(keyEvent && keyEvent->longPress)) {
             sprintf(buf,"%s %s","/etc/adckey/adckey_function.sh",keyType);
+#ifdef FILTER_POWERKEY
+            execute = filter_power_key(keyType);
+#else
             execute = true;
+#endif
         }
         if (execute) {
             //printf("input_eventd: run %s\n", buf);
