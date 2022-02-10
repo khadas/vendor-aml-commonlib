@@ -4,10 +4,10 @@ OUT_DIR ?= .
 .PHONY: all install clean
 
 ubootenv.o: ubootenv.c
-	$(CC)  -fPIC -c ubootenv.c  -o $(OUT_DIR)/$@
+	$(CC) $(CFLAGS) -fPIC -c ubootenv.c -o $(OUT_DIR)/$@
 
 uenv_test.o: uenv_test.c
-	$(CC) -c uenv_test.c -o $(OUT_DIR)/$@
+	$(CC) $(CFLAGS) -c uenv_test.c -o $(OUT_DIR)/$@
 
 all: ubootenv.o uenv
 	$(AR) rc $(OUT_DIR)/$(LIB) $(OUT_DIR)/ubootenv.o

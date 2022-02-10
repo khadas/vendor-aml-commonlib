@@ -5,7 +5,7 @@ LOCAL_LIBS := -L$(STAGING_DIR)/usr/lib -lpthread
 LOCAL_DEFINES := -DHAVE_PTHREADS -DHAVE_ANDROID_OS=1
 
 CFLAGS += -fPIC -Wall -Wno-unknown-pragmas -Wno-format -O3 -g -Wno-error=format-security
-CFLAGS += $(LOCAL_INCLUDES) $(LOCAL_DEFINES)
+CFLAGS += $(LOCAL_INCLUDES) $(LOCAL_DEFINES) $(CFLAGS_EXTRA)
 
 LDFLAGS += $(LOCAL_LIBS)
 
