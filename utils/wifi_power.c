@@ -2,6 +2,7 @@
 #include <asm/ioctl.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <dirent.h>
 
 #define USB_POWER_UP    _IO('m',1)
 #define USB_POWER_DOWN  _IO('m',2)
@@ -50,6 +51,26 @@ void set_wifi_power(int on)
     return;
 }
 
+int is_driver_loaded(const char *intface)
+{
+    DIR *d;
+    struct dirent *de;
+
+    d = opendir("/sys/class/net");
+    if (d == 0) {
+       printf("fail to open /sys/class/net\n");
+       return 0;
+    }
+    while ((de = readdir(d))) {
+        if (strcmp(de->d_name, intface)== 0) {
+            closedir(d);
+            return 1;
+        }
+    }
+    closedir(d);
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     long value = 0;
@@ -59,6 +80,19 @@ int main(int argc, char *argv[])
     }
     value = strtol(argv[1], NULL, 10);
     set_wifi_power(value);
+
+    if (value == 1) {
+        int wait_time = 0;
+        do {
+            if (is_driver_loaded("wlan0"))
+                break;
+            else {
+                wait_time++;
+                usleep(50000);
+            }
+        } while (wait_time < 100);
+    }
+
     return 0;
 }
 
