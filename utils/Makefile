@@ -33,14 +33,21 @@ usb_monitor: usb_monitor.c
 simulate_key: simulate_key.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -D IR_REMOTE_DEVICE=\"$(IR_REMOTE_DEVICE)\" -o $@ $^ $(LDLIBS)
 
+ioctl: ioctl.c
+	$(CC) -g3 -Wall -o $@ $^ -static
+
 all: $(UTILS)
 
 
 clean:
 	rm -f *.o $(UTILS)
 
+install_ioctl:
+	install -m 755 ioctl $(TARGET_DIR)/usr/bin/
+
 install:
 	install -m 755 $(UTILS) $(TARGET_DIR)/usr/bin/
 
 uninstall:
 	rm -f $(TARGET_DIR)/usr/bin/$(UTILS)
+	rm -f $(TARGET_DIR)/usr/bin/ioctl
