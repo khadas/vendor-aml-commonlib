@@ -45,8 +45,8 @@ int main(int argc, char *argv[]) {
   const char *deviceInfo = "/proc/bus/input/devices";
 
   char *p;
-  char *buf;
-  int readLen;
+  char *buf = 0;
+  size_t readLen = 0;
 
   unsigned char foundDev = 0;
 
