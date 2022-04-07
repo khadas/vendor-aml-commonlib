@@ -10,7 +10,7 @@ multi_wifi_load_driver: multi_wifi_load_driver.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 input_eventd: input_eventd.cpp events_process.cpp events.cpp
-	$(CXX) $(CFLAGS) $(LDFLAGS) -lpthread -o $@ $^ $(LDLIBS)
+	$(CXX) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS) -lpthread
 
 usbpower: usbpower.cpp usbctrl.cpp
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
