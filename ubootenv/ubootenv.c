@@ -51,12 +51,10 @@ static struct env_attribute env_attribute_header;
 
 /* Parse a session attribute */
 static env_attribute * env_parse_attribute(void) {
-    char *value,*key;
-    char *line;
+    char *key;
     char *proc = env_data.data;
     char *next_proc;
     env_attribute *attr = &env_attribute_header;
-    int n_char,n_char_end;
 
     memset(attr, 0, sizeof(env_attribute));
 
@@ -130,7 +128,6 @@ int read_bootenv() {
     int ret;
     uint32_t crc_calc;
     env_attribute *attr;
-    struct mtd_info_user info;
     struct env_image *image;
     char *addr;
 
@@ -321,6 +318,7 @@ int save_bootenv() {
     return 0;
 }
 
+#if 0
 static int is_bootenv_varible(const char* prop_name) {
     if (!prop_name || !(*prop_name))
         return 0;
@@ -365,10 +363,12 @@ int bootenv_property_list(void (*propfn)(const char *key, const char *value, voi
  #endif
     return 0;
 }
+#endif
 
 void bootenv_props_load() {
-    int count = 0;
 #if 0
+    int count = 0;
+
     bootenv_property_list(bootenv_prop_init, (void*)&count);
     char bootcmd[32];
     char val[PROP_VALUE_MAX]={0};
@@ -395,7 +395,6 @@ int bootenv_init(void) {
     int fd;
     int ret = -1;
     int i = 0;
-    int count = 0;
     /*
     int id = mtd_name_to_number("ubootenv");
     if (id >= 0) {
@@ -494,6 +493,7 @@ int bootenv_init(void) {
     INFO("[ubootenv] ubootenv varible prefix is: %s\n", prefix);
 #endif
 #if 0
+    int count = 0;
     property_list(init_bootenv_prop, (void*)&count);
     char bootcmd[32];
     char val[PROP_VALUE_MAX]={0};
