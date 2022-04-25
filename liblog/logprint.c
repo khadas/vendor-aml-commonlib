@@ -1117,6 +1117,7 @@ void logprint_run_tests()
         123, 123, "random", "nofile", strlen("Hello"), "Hello", NULL);
 #endif
 
+    android_log_format_free(p_format);
 
     fprintf(stderr, "tests complete\n");
 #endif
