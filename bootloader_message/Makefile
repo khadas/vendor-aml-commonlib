@@ -1,16 +1,17 @@
 LIB = libbootloader_message.a
+OBJS = bootloader_message.o bootloader_avb.o avb_crc32.o
 .PHONY: all install clean
 
 #bootloader_message.o: bootloader_message.c
 #	$(CC) -c bootloader_message.c
 
 all: urlmisc bootloader_message.o test_ab
-	$(AR) rc $(LIB) bootloader_message.o
+	$(AR) rc $(LIB) $(OBJS)
 
-urlmisc: urlmisc.o bootloader_message.o
+urlmisc: urlmisc.o $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
-test_ab : test.o bootloader_message.o
+test_ab : test.o $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 

@@ -718,6 +718,7 @@ int get_active_slot_from_cmdline(int *slot) {
     return 0;
 }
 
+#ifndef BOOTCTOL_AVB
 int get_active_slot_from_misc(int *slot) {
     int ret = 0;
     struct bootloader_message info;
@@ -734,11 +735,13 @@ int get_active_slot_from_misc(int *slot) {
     *slot = bootinfo.active_slot;
     return 0;
 }
+#endif
 
 int get_active_slot(int *slot) {
     return get_active_slot_from_cmdline(slot);
 }
 
+#ifndef BOOTCTOL_AVB
 int set_active_slot(int slot) {
     int ret = 0;
     struct bootloader_message info;
@@ -768,6 +771,7 @@ int set_active_slot(int slot) {
     }
     return 0;
 }
+#endif
 
 int get_inactive_devicename(const char *partitionname, int slot, char *device) {
     int ret = 0;
