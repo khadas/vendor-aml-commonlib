@@ -1,4 +1,7 @@
-UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor simulate_key
+UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor
+ifeq ($(USE_SIMULATE_KEY),y)
+UTILS += simulate_key
+endif
 .PHONY: all install clean
 #CFLAGS += $(AML_UTIL_PRIV_FLAGS)
 
