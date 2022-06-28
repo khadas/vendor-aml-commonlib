@@ -2,6 +2,10 @@ UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtes
 ifeq ($(USE_SIMULATE_KEY),y)
 UTILS += simulate_key
 endif
+ifeq ($(USE_AUTO_SHUTDOWN),y)
+UTILS += auto_shutdown
+endif
+
 .PHONY: all install clean
 #CFLAGS += $(AML_UTIL_PRIV_FLAGS)
 
@@ -38,6 +42,9 @@ simulate_key: simulate_key.c
 
 ioctl: ioctl.c
 	$(CC) -g3 -Wall -o $@ $^ -static
+
+auto_shutdown: auto_shutdown.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS) -lpthread
 
 all: $(UTILS)
 
