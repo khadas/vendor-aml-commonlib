@@ -28,7 +28,11 @@
 	printf("[Auto Shutdown][%s] " fmt, __func__, ##args)
 
 /*timer*/
-#define POWER_OFF_TIME_SEC   (45*60)    //45min
+#define POWER_OFF_TIME_DEFAULT           (45)                        //45min
+#define POWER_OFF_TIME_MIN               (5)                         //5min
+#define POWER_OFF_TIME_MAX               (90)                        //90min
+#define MIN_TO_SEC                       (60)                        //60s
+#define POWER_OFF_TIME_TO_SEC_DEFAULT    (POWER_OFF_TIME_DEFAULT * MIN_TO_SEC)
 
 /*usb*/
 #define UEVENT_BUFFER_SIZE 2048
@@ -75,6 +79,7 @@
 
 static int usb_state = USB_CONNECT;
 static int bt_state = HFP_STATE_DISCONNECT;
+static int timing_time_sec = POWER_OFF_TIME_TO_SEC_DEFAULT;
 
 static int stop_timer(void);
 static int check_to_start_timer(void);
@@ -404,15 +409,37 @@ static int check_to_start_timer(void)
 {
 	if (usb_state == USB_DISCONNECT
 		&& bt_state == HFP_STATE_DISCONNECT)
-		start_timer(POWER_OFF_TIME_SEC);
+		start_timer(timing_time_sec);
 	return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	int usb_fd, key_fd;
+	int timing_time_min;
 	pthread_t bt_thread_id;
 	struct pollfd pollfds[2];
+	const char *cmd_usage = {
+		"Usage:\n"
+		"\t Automatic shutdown when idle \n"
+		"\t auto_shutdown <Timing time> \n"
+		"\t <Timing time>: 5 ~ 90\n"
+		"\t MIN:5min  MAX:90min  Default:45min\n"
+	};
+
+	if (argc != 2) {
+		printf("%s", cmd_usage);
+		return -1;
+	}
+
+	if ((timing_time_min = atoi(argv[1])) != 0) {
+		if (timing_time_min < POWER_OFF_TIME_MIN || timing_time_min > POWER_OFF_TIME_MAX)
+			timing_time_min = POWER_OFF_TIME_DEFAULT;
+	} else {
+		timing_time_min = POWER_OFF_TIME_DEFAULT;
+	}
+	INFO("Timing time: %d min\n", timing_time_min);
+	timing_time_sec = timing_time_min * MIN_TO_SEC;
 
 	memset(pollfds, 0, sizeof(pollfds));
 	/*usb*/
