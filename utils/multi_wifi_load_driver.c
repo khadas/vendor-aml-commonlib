@@ -657,11 +657,11 @@ static void set_wifi_power(int power)
 		default:
 			break;
 		}
+	close(fd);
 	} else {
 		fprintf(stderr, "device /dev/wifi_power open failed\n");
 		return;
 	}
-	close(fd);
 
 	return;
 }
@@ -841,8 +841,7 @@ static int sdio_wifi_load_driver(int type)
 				memset(module_arg, 0, sizeof(module_arg));
 				if (sizeof(module_arg) > strlen(dongle_registerd[i].wifi_module_arg2) ) {
 					memcpy(module_arg, dongle_registerd[i].wifi_module_arg2, strlen(dongle_registerd[i].wifi_module_arg2));
-				}
-                else {
+				} else {
 					fprintf(stderr, "[%s:%d]modules_args is too long\n", __func__, __LINE__);
 					return -1;
 				}
@@ -908,22 +907,21 @@ static int wifi_off(void)
 	int i, j, ret;
 	char dev_type[10] = {'\0'};
 	char sdio_buf[128];
-	FILE *fp;
+	FILE *fp = NULL;
 	get_wifi_dev_type(dev_type);
 
 	for (i = 0; i < 2; i++) {
 		sprintf(file_name, "/sys/bus/mmc/devices/%s:000%d/%s:000%d:1/device", dev_type,i , dev_type, i);
 		fp = fopen(file_name, "r");
-		if (fp > 0) {
+		if (fp != NULL) {
 			break;
 		} else {
-			close(fp);
 			fprintf(stderr, "open sdio wifi file failed\n");
 			continue;
 		}
 	}
 
-	if (i != 2) {
+	if (fp != NULL) {
 		memset(sdio_buf, 0, sizeof(sdio_buf));
 		ret = fread(sdio_buf, 1, 128, fp);
 		sdio_buf[sizeof(sdio_buf)-1] = '\0';

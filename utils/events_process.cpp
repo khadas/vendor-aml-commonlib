@@ -244,24 +244,19 @@ void EventsProcess::load_key_map() {
 
         fclose(fstab);
         printf("keyboard key map table:\n");
-        int j;
-        for (j = 0; j < num_keys; ++j) {
-            KeyMapItem_t* v = &keys_map[j];
-            printf("  %d type:%s value:%d mode:%d\n", j, v->type, v->value, v->mode);
-        }
-        free(keys_map);
     } else {
         printf("error: failed to open /etc/gpio_key.kl, use default map\n");
         num_keys = DEFAULT_KEY_NUM;
         keys_map = g_default_keymap;
+    }
         printf("keyboard key map table:\n");
         int i;
         for (i = 0; i < num_keys; ++i) {
             KeyMapItem_t* v = &keys_map[i];
             printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
         }
-    }
-
+        if (keys_map != g_default_keymap)
+          free(keys_map);
 }
 
 int EventsProcess::getMapKey(int key) {
