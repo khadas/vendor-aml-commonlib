@@ -60,7 +60,7 @@ static enum {
 int __android_log_dev_available(void)
 {
     if (g_log_status == kLogUninitialized) {
-        if (access("/dev/"LOGGER_LOG_MAIN, W_OK) == 0)
+        if (access(LOGGER_LOG_MAIN, W_OK) == 0)
             g_log_status = kLogAvailable;
         else
             g_log_status = kLogNotAvailable;
@@ -99,10 +99,10 @@ static int __write_to_log_init(int log_id, struct iovec *vec, size_t nr)
 #endif
 
     if (write_to_log == __write_to_log_init) {
-        log_fds[LOG_ID_MAIN] = log_open("/dev/"LOGGER_LOG_MAIN, O_WRONLY);
-        log_fds[LOG_ID_RADIO] = log_open("/dev/"LOGGER_LOG_RADIO, O_WRONLY);
-        log_fds[LOG_ID_EVENTS] = log_open("/dev/"LOGGER_LOG_EVENTS, O_WRONLY);
-        log_fds[LOG_ID_SYSTEM] = log_open("/dev/"LOGGER_LOG_SYSTEM, O_WRONLY);
+        log_fds[LOG_ID_MAIN] = log_open(LOGGER_LOG_MAIN, O_WRONLY);
+        log_fds[LOG_ID_RADIO] = log_open(LOGGER_LOG_RADIO, O_WRONLY);
+        log_fds[LOG_ID_EVENTS] = log_open(LOGGER_LOG_EVENTS, O_WRONLY);
+        log_fds[LOG_ID_SYSTEM] = log_open(LOGGER_LOG_SYSTEM, O_WRONLY);
 
         write_to_log = __write_to_log_kernel;
 

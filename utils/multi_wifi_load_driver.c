@@ -659,6 +659,7 @@ static void set_wifi_power(int power)
 		}
 	} else {
 		fprintf(stderr, "device /dev/wifi_power open failed\n");
+		return;
 	}
 	close(fd);
 
@@ -713,7 +714,7 @@ static int set_rtk_wifi_mac(char *module_arg)
 	memset(wifimac, 0 ,sizeof(wifimac));
 	wifimac_fp = fopen(wifimac_fileName, "r");
 	if (wifimac_fp) {
-		if (fread(wifimac, 1, sizeof(wifimac) - 1, wifimac_fp) > 0) {
+		if (fread(wifimac, 1, sizeof(wifimac) - 1, wifimac_fp) == sizeof(wifimac) -1 ) {
 			wifimac[sizeof(wifimac) - 1] = '\0';
 			if (strlen(wifimac) > 0 && wifimac[strlen(wifimac) - 1] == '\n') {
 				wifimac[strlen(wifimac) - 1] = '\0';
@@ -838,7 +839,13 @@ static int sdio_wifi_load_driver(int type)
 			if (dongle_registerd[i].wifi_module_name2) {
 				memset(module_path, 0, sizeof(module_path));
 				memset(module_arg, 0, sizeof(module_arg));
-				memcpy(module_arg, dongle_registerd[i].wifi_module_arg2, strlen(dongle_registerd[i].wifi_module_arg2));
+				if (sizeof(module_arg) > strlen(dongle_registerd[i].wifi_module_arg2) ) {
+					memcpy(module_arg, dongle_registerd[i].wifi_module_arg2, strlen(dongle_registerd[i].wifi_module_arg2));
+				}
+                else {
+					fprintf(stderr, "[%s:%d]modules_args is too long\n", __func__, __LINE__);
+					return -1;
+				}
 				sprintf(module_path, "%s/%s", dongle_registerd[i].wifi_module_path, dongle_registerd[i].wifi_module_filename2);
 				fprintf(stderr, "[%s:%d]module_path2(%s)\n", __func__, __LINE__, module_path);
 				fprintf(stderr, "[%s:%d]module_arg2(%s)\n", __func__, __LINE__, module_arg);
@@ -910,6 +917,7 @@ static int wifi_off(void)
 		if (fp > 0) {
 			break;
 		} else {
+			close(fp);
 			fprintf(stderr, "open sdio wifi file failed\n");
 			continue;
 		}
@@ -918,6 +926,7 @@ static int wifi_off(void)
 	if (i != 2) {
 		memset(sdio_buf, 0, sizeof(sdio_buf));
 		ret = fread(sdio_buf, 1, 128, fp);
+		sdio_buf[sizeof(sdio_buf)-1] = '\0';
 		fclose(fp);
 		if (ret < 1)
 			return -1;

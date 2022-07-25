@@ -14,8 +14,9 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
-
-#define _GNU_SOURCE /* for asprintf */
+#ifndef _GNU_SOURCE
+  #define _GNU_SOURCE /* for asprintf */
+#endif
 
 #include <ctype.h>
 #include <stdio.h>

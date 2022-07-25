@@ -29,10 +29,10 @@ private:
     int key_queue[256], key_queue_len;
     struct timeval last_queue_time;
     char key_pressed[KEY_MAX + 1];
-    int key_last_down;
-    int key_down_count;
-    bool enable_reboot;
-    int rel_sum;
+    int key_last_down=0;
+    int key_down_count=0;
+    bool enable_reboot=0;
+    int rel_sum=0;
 
     struct KeyEvent {
       int64_t down_ts_us;
@@ -60,7 +60,7 @@ private:
 
     #define NUM_CTRLINFO 3
 
-    pthread_t input_thread_;
+    pthread_t input_thread_ = 0;
 
     static int InputCallback(int fd, uint32_t epevents, void* data);
     int OnInputEvent(int fd, uint32_t epevents);

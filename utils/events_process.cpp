@@ -163,6 +163,11 @@ void EventsProcess::time_key(key_timer_t *info) {
             if (keymode != 0)
                 info->ke->curlongPress = true;
         }
+        else {
+          printf("##recive key but no events##\n");
+          pthread_mutex_unlock(&key_queue_mutex);
+          return;
+        }
     }
     if (info->ke->longPress && info->ke->curlongPress) {
         pthread_mutex_unlock(&key_queue_mutex);
@@ -218,7 +223,7 @@ void EventsProcess::load_key_map() {
             char* key = strtok(NULL, " \t\n");
             char* mode = strtok(NULL, " \t\n");
             value = atoi (key);
-            if (type && key && (value > 0)) {
+            if (type && (value > 0)) {
                 while (num_keys >= alloc) {
                     alloc *= 2;
                     keys_map = (KeyMapItem_t*)realloc(keys_map, alloc*sizeof(KeyMapItem_t));
@@ -238,18 +243,25 @@ void EventsProcess::load_key_map() {
         }
 
         fclose(fstab);
+        printf("keyboard key map table:\n");
+        int j;
+        for (j = 0; j < num_keys; ++j) {
+            KeyMapItem_t* v = &keys_map[j];
+            printf("  %d type:%s value:%d mode:%d\n", j, v->type, v->value, v->mode);
+        }
+        free(keys_map);
     } else {
         printf("error: failed to open /etc/gpio_key.kl, use default map\n");
         num_keys = DEFAULT_KEY_NUM;
         keys_map = g_default_keymap;
+        printf("keyboard key map table:\n");
+        int i;
+        for (i = 0; i < num_keys; ++i) {
+            KeyMapItem_t* v = &keys_map[i];
+            printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
+        }
     }
 
-    printf("keyboard key map table:\n");
-    int i;
-    for (i = 0; i < num_keys; ++i) {
-        KeyMapItem_t* v = &keys_map[i];
-        printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
-    }
 }
 
 int EventsProcess::getMapKey(int key) {
@@ -344,7 +356,7 @@ void EventsProcess::WaitKey() {
     char buf[100];
     if (key_queue_len > 0) {
         key = key_queue[0];
-        memcpy(&key_queue[0], &key_queue[1], sizeof(int) * --key_queue_len);
+        memmove(&key_queue[0], &key_queue[1], sizeof(int) * --key_queue_len);
     }
 
     std::vector<KeyEvent *>::iterator iter = mKeyEventVec.begin();

@@ -330,11 +330,10 @@ int get_dwc_driver_version(void)
 	int i;
 
 	dwc_driver_version = -1;
-	
 	fpv = fopen(DWC_OTG_VERSION_DIR,"r");
 	if(fpv){
-		if(fread(ver_buf,1,DWC_DRIVER_VERSION_LEN + 1,fpv) > 0){
-			for(i=DWC_DRIVER_1;i<DWC_DRIVER_MAX;i++){			
+		if (fread(ver_buf,1,DWC_DRIVER_VERSION_LEN + 1,fpv) == DWC_DRIVER_VERSION_LEN + 1 ) {
+			for (i=DWC_DRIVER_1; i<DWC_DRIVER_MAX; i++) {
 				if(strncmp(ver_buf,dwc_driver_version_str[i],DWC_DRIVER_VERSION_LEN)==0){
 					dwc_driver_version = i;
 					break;
