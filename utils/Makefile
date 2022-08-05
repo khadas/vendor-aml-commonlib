@@ -5,6 +5,9 @@ endif
 ifeq ($(USE_AUTO_SHUTDOWN),y)
 UTILS += auto_shutdown
 endif
+ifeq ($(USE_BATTERY_MONITOR),y)
+UTILS += battery_monitor
+endif
 
 .PHONY: all install clean
 #CFLAGS += $(AML_UTIL_PRIV_FLAGS)
@@ -45,6 +48,9 @@ ioctl: ioctl.c
 
 auto_shutdown: auto_shutdown.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS) -lpthread
+
+battery_monitor: battery_monitor.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 all: $(UTILS)
 
