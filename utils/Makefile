@@ -52,6 +52,9 @@ auto_shutdown: auto_shutdown.c
 battery_monitor: battery_monitor.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
+fota_upgrade: fota_upgrade.c ../aml_utility/unifykey.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS) -L../fota -ldmgr -lamldeviceproperty -lm -ldl -lpthread
+
 all: $(UTILS)
 
 
