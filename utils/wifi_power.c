@@ -43,11 +43,11 @@ void set_wifi_power(int on)
             } else
                 printf("inf=%s\n", dev_type);
        }
+       close(fd);
     } else {
         printf("Device open failed !!!\n");
     }
 
-    close(fd);
     return;
 }
 
