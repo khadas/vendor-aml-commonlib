@@ -735,10 +735,18 @@ int get_active_slot_from_misc(int *slot) {
     *slot = bootinfo.active_slot;
     return 0;
 }
+
+int set_successful_boot() {
+    return 0;
+}
 #endif
 
 int get_active_slot(int *slot) {
     return get_active_slot_from_cmdline(slot);
+}
+
+int get_active_slot_misc(int *slot) {
+    return get_active_slot_from_misc(slot);
 }
 
 #ifndef BOOTCTOL_AVB
@@ -756,10 +764,10 @@ int set_active_slot(int slot) {
     memcpy(&bootinfo, info.slot_suffix, SLOTBUF_SIZE);
     if (slot == 0) {
         memcpy(bootinfo.bootctrl_suffix, "_a", 2);
-	printf("set_active_slot: _a\n");
+        printf("set_active_slot: _a\n");
     } else {
         memcpy(bootinfo.bootctrl_suffix, "_b", 2);
-	printf("set_active_slot: _b\n");
+        printf("set_active_slot: _b\n");
     }
     bootinfo.active_slot = slot;
     memcpy(info.slot_suffix, &bootinfo, SLOTBUF_SIZE);

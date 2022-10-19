@@ -59,6 +59,8 @@ int clear_recovery();
 int set_recovery();
 int get_active_slot(int *slot);
 int set_active_slot(int slot);
+int get_active_slot_misc(int *slot);
+int set_successful_boot();
 int set_recovery_otapath(char *path);
 int get_recovery_otapath(char * path);
 int clean_recovery_otapath();

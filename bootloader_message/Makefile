@@ -5,13 +5,13 @@ OBJS = bootloader_message.o bootloader_avb.o avb_crc32.o
 #bootloader_message.o: bootloader_message.c
 #	$(CC) -c bootloader_message.c
 
-all: urlmisc bootloader_message.o test_ab
+all: urlmisc bootloader_message.o bootloader_slot
 	$(AR) rc $(LIB) $(OBJS)
 
 urlmisc: urlmisc.o $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
-test_ab : test.o $(OBJS)
+bootloader_slot : test.o $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 

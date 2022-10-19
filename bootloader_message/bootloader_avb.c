@@ -20,9 +20,10 @@ static void dump_boot_info(AvbABData* info)
     printf("info->crc32 = %d\n", info->crc32);
 }
 
-static int get_bootloader_message_block(char * miscbuf, int size) {
+static int get_bootloader_message_block(char * miscbuf, int size, AvbABData *info) {
     const char *misc_device = "/dev/misc";
     printf ("read misc for emmc device\n");
+
     FILE* f = fopen(misc_device, "rb");
     if (f == NULL) {
         printf("Can't open %s\n(%s)\n", misc_device, strerror(errno));
@@ -38,6 +39,9 @@ static int get_bootloader_message_block(char * miscbuf, int size) {
         printf("Failed closing %s\n(%s)\n", misc_device, strerror(errno));
         return -1;
     }
+
+    memcpy(info, miscbuf + AB_METADATA_MISC_PARTITION_OFFSET, AVB_AB_DATA_SIZE);
+    dump_boot_info(info);
 
     return 0;
 }
@@ -55,9 +59,9 @@ uint32_t avb_htobe32(uint32_t in) {
   return ret.word;
 }
 
-
 static int set_bootloader_message_block(char * miscbuf, int size, AvbABData *info) {
     const char *misc_device = "/dev/misc";
+    printf ("write misc for emmc device\n");
 
     info->crc32 = avb_htobe32(
       avb_crc32((const uint8_t*)info, sizeof(AvbABData) - sizeof(uint32_t)));
@@ -65,7 +69,6 @@ static int set_bootloader_message_block(char * miscbuf, int size, AvbABData *inf
     memcpy(miscbuf+AB_METADATA_MISC_PARTITION_OFFSET, info, AVB_AB_DATA_SIZE);
     dump_boot_info(info);
 
-    printf ("write misc for emmc device\n");
     FILE* f = fopen(misc_device, "wb");
     if (f == NULL) {
         printf("Can't open %s\n(%s)\n", misc_device, strerror(errno));
@@ -88,14 +91,12 @@ int get_active_slot_from_misc(int *slot) {
     AvbABData info;
     char miscbuf[MISCBUF_SIZE] = {0};
 
-    ret = get_bootloader_message_block(miscbuf, MISCBUF_SIZE);
+    ret = get_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
     if (ret != 0) {
         printf("get_bootloader_message failed!\n");
         return -1;
     }
 
-    memcpy(&info, miscbuf + AB_METADATA_MISC_PARTITION_OFFSET, AVB_AB_DATA_SIZE);
-    dump_boot_info(&info);
     if (info.slots[0].priority > info.slots[1].priority)
         *slot = 0;
     else
@@ -121,6 +122,7 @@ int boot_info_set_active_slot(AvbABData* info, int slot)
 {
     unsigned int other_slot_number;
 
+    printf ("set active slot: %d\n", slot);
     /* Make requested slot top priority, unsuccessful, and with max tries. */
     info->slots[slot].priority = AVB_AB_MAX_PRIORITY;
     info->slots[slot].tries_remaining = AVB_AB_MAX_TRIES_REMAINING;
@@ -152,22 +154,59 @@ void boot_info_reset(AvbABData* info)
 }
 
 int set_active_slot(int slot) {
+    int ret = 0;
     char miscbuf[MISCBUF_SIZE] = {0};
     AvbABData info;
 
-    get_bootloader_message_block(miscbuf, MISCBUF_SIZE);
-    memcpy(&info, miscbuf+AB_METADATA_MISC_PARTITION_OFFSET, AVB_AB_DATA_SIZE);
-    dump_boot_info(&info);
+    ret = get_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
+    if (ret != 0) {
+        printf("get_bootloader_message failed!\n");
+        return -1;
+    }
 
     if (!boot_info_validate(&info)) {
         printf("boot-info is invalid. Resetting.\n");
         boot_info_reset(&info);
     }
 
-
     boot_info_set_active_slot(&info, slot);
 
-    set_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
+    ret = set_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
+    if (ret != 0) {
+        printf("set_bootloader_message failed!\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+int set_successful_boot() {
+    int ret = 0;
+    char miscbuf[MISCBUF_SIZE] = {0};
+    AvbABData info;
+    int slot = 0;
+
+    ret = get_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
+    if (ret != 0) {
+        printf("get_bootloader_message failed!\n");
+        return -1;
+    }
+
+    if (info.slots[1].priority > info.slots[0].priority) {
+        slot = 1;
+    }
+
+    if (info.slots[slot].successful_boot) {
+        return 0;
+    }
+
+    info.slots[slot].successful_boot = 1;
+    ret = set_bootloader_message_block(miscbuf, MISCBUF_SIZE, &info);
+    if (ret != 0) {
+        printf("set_bootloader_message failed!\n");
+        return -1;
+    }
+
     return 0;
 }
 #endif
