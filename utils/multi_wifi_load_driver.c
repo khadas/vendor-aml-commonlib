@@ -216,6 +216,20 @@ static const dongle_info dongle_registerd[] = {
 		"bcm6234",
 		0x0
 	},
+	{
+		"aae8",
+		"dhd",
+		"dhd.ko",
+		BROADCOM_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type       = MODULE_ARG_FIRMWARE,
+			.firmware_path  = "AP6275/fw_bcm43752a2_ag.bin",
+			.firmware_ap_path  = "AP6275/fw_bcm43752a2_ag_apsta.bin",
+			.nvram_path     = "AP6275/nvram_ap6275s.txt",
+		},
+		"ap6275",
+		0x0
+	},
 #ifdef CYPRESS_WIFI_MODULE
 {
 	"a9bf",
