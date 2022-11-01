@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <mtd/mtd-user.h>
+#include <stdint.h>
 
 #include "bootloader_message.h"
 
@@ -22,6 +23,56 @@
 
 #define CMD_RUN_RECOVERY   "boot-recovery"
 #define MTD_PROC_FILENAME   "/proc/mtd"
+
+struct bootloader_message {
+    char command[32];
+    char status[32];
+    char recovery[768];
+
+    // The 'recovery' field used to be 1024 bytes.  It has only ever
+    // been used to store the recovery command line, so 768 bytes
+    // should be plenty.  We carve off the last 256 bytes to store the
+    // stage string (for multistage packages) and possible future
+    // expansion.
+    char stage[32];
+    char slot_suffix[32];
+    char reserved[192];
+};
+
+typedef struct BrilloSlotInfo {
+    uint8_t bootable;
+    uint8_t online;
+    uint8_t reserved[2];
+} BrilloSlotInfo;
+
+typedef struct BrilloBootInfo {
+    // Used by fs_mgr. Must be NUL terminated.
+    char bootctrl_suffix[4];
+
+    // Magic for identification - must be 'B', 'C', 'c' (short for
+    // "boot_control copy" implementation).
+    uint8_t magic[3];
+
+    // Version of BrilloBootInfo struct, must be 0 or larger.
+    uint8_t version;
+
+    // Currently active slot.
+    uint8_t active_slot;
+
+    // Information about each slot.
+    BrilloSlotInfo slot_info[2];
+    uint8_t attemp_times;
+
+    uint8_t reserved[14];
+} BrilloBootInfo;
+
+typedef struct MtdPartition {
+    int device_index;
+    long long size;
+    long long erase_size;
+    char *name;
+} MtdPartition;
+
 
 int g_init = 0;
 int g_mtd_number = 0;
@@ -741,16 +792,16 @@ int set_successful_boot() {
 }
 #endif
 
-int get_active_slot(int *slot) {
+int get_active_slot(SlotType_e *slot) {
     return get_active_slot_from_cmdline(slot);
 }
 
-int get_active_slot_misc(int *slot) {
+int get_active_slot_misc(SlotType_e *slot) {
     return get_active_slot_from_misc(slot);
 }
 
 #ifndef BOOTCTOL_AVB
-int set_active_slot(int slot) {
+int set_active_slot(SlotType_e slot) {
     int ret = 0;
     struct bootloader_message info;
     BrilloBootInfo bootinfo;
@@ -781,7 +832,7 @@ int set_active_slot(int slot) {
 }
 #endif
 
-int get_inactive_devicename(const char *partitionname, int slot, char *device) {
+int get_inactive_devicename(const char *partitionname, SlotType_e slot, char *device) {
     int ret = 0;
     int mtd = 0;
     char tmp[128] = {0};
