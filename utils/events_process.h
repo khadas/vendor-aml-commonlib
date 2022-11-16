@@ -16,7 +16,7 @@ class EventsProcess {
         int mode;
     };
     EventsProcess();
-    virtual ~EventsProcess() { }
+    virtual ~EventsProcess();
     virtual void Init();
     virtual void WaitKey();
 //    virtual void KeyLongPress(int key);

@@ -41,6 +41,14 @@ EventsProcess::EventsProcess()
     load_key_map();
 }
 
+EventsProcess::~EventsProcess() {
+
+    if ( (keys_map != g_default_keymap) && (NULL != keys_map) ) {
+        free(keys_map);
+    }
+    pthread_mutex_destroy(&key_queue_mutex);
+    pthread_cond_destroy(&key_queue_cond);
+}
 
 int EventsProcess::InputCallback(int fd, uint32_t epevents, void* data) {
     return reinterpret_cast<EventsProcess*>(data)->OnInputEvent(fd, epevents);
@@ -243,20 +251,18 @@ void EventsProcess::load_key_map() {
         }
 
         fclose(fstab);
-        printf("keyboard key map table:\n");
+
     } else {
         printf("error: failed to open /etc/gpio_key.kl, use default map\n");
         num_keys = DEFAULT_KEY_NUM;
         keys_map = g_default_keymap;
     }
-        printf("keyboard key map table:\n");
-        int i;
-        for (i = 0; i < num_keys; ++i) {
-            KeyMapItem_t* v = &keys_map[i];
-            printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
-        }
-        if (keys_map != g_default_keymap)
-          free(keys_map);
+    printf("keyboard key map table:\n");
+    int i;
+    for (i = 0; i < num_keys; ++i) {
+        KeyMapItem_t* v = &keys_map[i];
+        printf("  %d type:%s value:%d mode:%d\n", i, v->type, v->value, v->mode);
+    }
 }
 
 int EventsProcess::getMapKey(int key) {
