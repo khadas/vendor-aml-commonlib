@@ -62,7 +62,8 @@ typedef struct AvbABData {
   uint8_t version_minor;
 
   /* Padding to ensure |slots| field start eight bytes in. */
-  uint8_t reserved1[2];
+  uint8_t roll_flag;
+  uint8_t reserved1[1];
 
   /* Per-slot metadata. */
   AvbABSlotData slots[2];
@@ -80,6 +81,7 @@ static void dump_boot_info(AvbABData* info)
     printf("info->magic 0x%x 0x%x 0x%x 0x%x\n", info->magic[0], info->magic[1], info->magic[2], info->magic[3]);
     printf("info->version_major = %d\n", info->version_major);
     printf("info->version_minor = %d\n", info->version_minor);
+    printf("info->roll_flag = %d\n", info->roll_flag);
     printf("info->slots[0].priority = %d\n", info->slots[0].priority);
     printf("info->slots[0].tries_remaining = %d\n", info->slots[0].tries_remaining);
     printf("info->slots[0].successful_boot = %d\n", info->slots[0].successful_boot);
@@ -215,6 +217,7 @@ void boot_info_reset(AvbABData* info)
     memcpy(info->magic, AVB_AB_MAGIC, AVB_AB_MAGIC_LEN);
     info->version_major = AVB_AB_MAJOR_VERSION;
     info->version_minor = AVB_AB_MINOR_VERSION;
+    info->roll_flag = 0;
     info->slots[0].priority = AVB_AB_MAX_PRIORITY;
     info->slots[0].tries_remaining = AVB_AB_MAX_TRIES_REMAINING;
     info->slots[0].successful_boot = 0;
@@ -238,6 +241,9 @@ int set_active_slot(SlotType_e slot) {
         printf("boot-info is invalid. Resetting.\n");
         boot_info_reset(&info);
     }
+
+    // clear roll flag
+    info.roll_flag = 0;
 
     boot_info_set_active_slot(&info, slot);
 
