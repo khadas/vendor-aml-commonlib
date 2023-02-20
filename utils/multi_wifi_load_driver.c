@@ -462,6 +462,20 @@ static const dongle_info dongle_registerd[] = {
 		"country_code=WW conf_path=/etc/wifi/w1 vmac1=wlan1 vif1opmode=2 con_mode=0x06 plt_ver=gva"
 	},
 	{
+		"0540",
+		"w1u_comm",
+		"w1u_comm.ko",
+		AMLOGIC_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type = MODULE_ARG_IFNAME,
+		},
+		"w155s2",
+		0xffff,
+		"w1u",
+		"w1u.ko",
+		"country_code=WW conf_path=/w1u vmac0=wlan0 vmac1=p2p0 vif0opmode=1 vif1opmode=2 con_mode=0x06"
+	},
+	{
 		"7603",
 		"wlan_mt7663_sdio",
 		"wlan_mt7663_sdio.ko",
