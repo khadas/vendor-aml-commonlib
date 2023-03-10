@@ -1,747 +1,636 @@
 #define LOG_TAG "SystemControl"
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
+#include <assert.h>
 #include <errno.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
-#include <zlib.h>
-
-//#include <cutils/properties.h>
-//#include <cutils/threads.h>
-//#include "util.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #ifdef MTD_OLD
-# include <linux/mtd/mtd.h>
+#include <linux/mtd/mtd.h>
 #else
-# define  __user	/* nothing */
-# include <mtd/mtd-user.h>
+#define __user /* nothing */
+#include <mtd/mtd-user.h>
 #endif
 
 #include "ubootenv.h"
-//#include "common.h"
-#define SYS_LOGI(x...)     printf(x)
-#define ERROR(x...)     printf(x)
-#define NOTICE(x...)    printf(x)
-#define INFO(x...)      printf(x)
-//static mutex_t  env_lock = MUTEX_INITIALIZER;
+#define SYS_LOGI(x...) printf(x)
+#define ERROR(x...) printf(x)
+#define NOTICE(x...) printf(x)
+#define INFO(x...) printf(x)
 
-//extern unsigned long crc32(crc, buf, len);
+#define MAX_UBOOT_RWRETRY 5
 
-char BootenvPartitionName[32]={0};
-char PROFIX_UBOOTENV_VAR[32]={0};
+typedef struct env_image {
+  uint32_t crc; /* CRC32 over data bytes	*/
+  char data[];  /* Environment data		*/
+} env_image_t;
 
-static unsigned int ENV_PARTITIONS_SIZE = 0;
-static unsigned int ENV_EASER_SIZE = 0 ;
-static unsigned int ENV_SIZE = 0;
+typedef struct environment {
+  void *image;
+  uint32_t *crc;
+  char *data;
+} environment_t;
 
-static int ENT_INIT_DONE = 0;
+typedef struct env_kv {
+  struct env_kv *next;
+  char key[256];
+  char *value;
+} env_kv;
 
-static struct environment env_data;
-static struct env_attribute env_attribute_header;
-//static char env_arg_buf[ENV_PARTITIONS_SIZE+sizeof(uint32_t)];
+static char gs_partition_name[32] = {0};
 
+static unsigned int gs_env_partition_size = 0;
+static unsigned int gs_env_erase_size = 0;
+static unsigned int gs_env_data_size = 0;
 
-/*************************for demo uboot arg areas write uboot args read and write*********************/
+static bool gs_init_done = false;
 
-/* Parse a session attribute */
-static env_attribute * env_parse_attribute(void) {
-    char *key;
-    char *proc = env_data.data;
-    char *next_proc;
-    env_attribute *attr = &env_attribute_header;
+static struct environment gs_env_data;
+static struct env_kv gs_kv_header;
+static pthread_mutex_t gs_kv_lock = PTHREAD_MUTEX_INITIALIZER;
 
-    memset(attr, 0, sizeof(env_attribute));
+//#define ENV_IMG_SHM_NAME "/uenv_shm"
+#define ENV_SHM_PATH "/dev/shm"
+#define ENV_IMG_SHM_NAME ENV_SHM_PATH "/uenvShm"
 
-    do {
-        next_proc = proc+strlen(proc)+sizeof(char);
-        //NOTICE("process %s\n",proc);
-        key = strchr(proc, (int)'=');
-        if (key != NULL) {
-            *key=0;
-            strcpy(attr->key, proc);
-            attr->value = (char *)malloc(strlen(key+1)+1);
-            memset(attr->value,0,strlen(key+1)+1);
-            strcpy(attr->value, key+sizeof(char));
-        } else {
-            ERROR("[ubootenv] error need '=' skip this value\n");
-        }
+static struct uenv_img_shm_info {
+  char lock;
+  int32_t refcnt;
+  uint32_t revision;
+  char imgdata[0];
+} *gs_env_shm_info = NULL;
 
-        if (!(*next_proc)) {
-            //NOTICE("process end \n");
-            break;
-        }
-        proc = next_proc;
+static uint32_t gs_current_revision = 0;
+// check the existence of /dev/shm,
+// to prevent malfunctions when running in a ramdisk environment
+static bool gs_shm_available = true;
 
-        attr->next =(env_attribute *)malloc(sizeof(env_attribute));
-        if (attr->next == NULL) {
-            ERROR("[ubootenv] exit malloc error \n");
-            break;
-        }
-        memset(attr->next, 0, sizeof(env_attribute));
-        attr = attr->next;
-    }while(1);
+#define CRC32_POLYNOMIAL 0xEDB88320
 
-    //NOTICE("*********key: [%s]\n",env_attribute_header.next->key);
-    return &env_attribute_header;
+static uint32_t crc32(const char *buffer, size_t size) {
+  uint32_t crc = 0xFFFFFFFF;
+  size_t i, j;
+
+  for (i = 0; i < size; i++) {
+    crc ^= buffer[i];
+    for (j = 0; j < 8; j++) {
+      if (crc & 1) {
+        crc = (crc >> 1) ^ CRC32_POLYNOMIAL;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+
+  return ~crc;
 }
 
-/*  attribute revert to sava data*/
-static int env_revert_attribute(void) {
-    int len;
-    env_attribute *attr = &env_attribute_header;
-    char *data = env_data.data;
-    memset(env_data.data,0,ENV_SIZE);
-    do {
-        len = sprintf(data, "%s=%s", attr->key, attr->value);
-        if (len < (int)(sizeof(char)*3)) {
-            ERROR("[ubootenv] Invalid data\n");
-        }
-        else
-            data += len+sizeof(char);
-
-        attr=attr->next;
-    }while(attr);
-    return 0;
+static void envimg_buffer_lock() {
+  int max_retry_cnt = 1000;
+  while (__sync_val_compare_and_swap(&gs_env_shm_info->lock, 0, 1) &&
+         max_retry_cnt-- > 0)
+    usleep(1000);
 }
 
-env_attribute *bootenv_get_attr(void) {
-    return &env_attribute_header;
+static void envimg_buffer_unlock() {
+  assert(__sync_val_compare_and_swap(&gs_env_shm_info->lock, 1, 0));
 }
 
-void bootenv_print(void) {
-    env_attribute *attr=&env_attribute_header;
-    while (attr != NULL) {
-        SYS_LOGI("[ubootenv] key: [%s]\n", attr->key);
-        SYS_LOGI("[ubootenv] value: [%s]\n\n", attr->value);
-        attr = attr->next;
+static char *acquire_envimg_buffer() {
+  if (gs_env_shm_info && gs_env_shm_info->imgdata != NULL) {
+    return gs_env_shm_info->imgdata;
+  }
+
+  uint32_t size = gs_env_partition_size + sizeof(struct uenv_img_shm_info);
+
+  gs_shm_available = access(ENV_SHM_PATH, F_OK) != -1;
+
+  if (!gs_shm_available) {
+    gs_env_shm_info = (struct uenv_img_shm_info *)malloc(size);
+    return gs_env_shm_info->imgdata;
+  }
+
+  mode_t old_umask = umask(0);
+  int32_t fd = open(ENV_IMG_SHM_NAME, O_CREAT | O_RDWR, 0666);
+  umask(old_umask);
+
+  if (fd == -1) {
+    fd = open(ENV_IMG_SHM_NAME, O_RDWR);
+    if (fd == -1) {
+      perror("open");
+      goto failure;
     }
-}
+  }
 
-int read_bootenv() {
-    int fd;
-    int ret;
-    uint32_t crc_calc;
-    env_attribute *attr;
-    struct env_image *image;
-    char *addr;
+  if (ftruncate(fd, size) == -1) {
+    perror("ftruncate");
+    goto failure;
+  }
 
-    if ((fd = open(BootenvPartitionName,O_RDONLY)) < 0) {
-        ERROR("[ubootenv] open devices error: %s\n" ,strerror(errno));
-        return -1;
-    }
-
-    addr = (char *)malloc(ENV_PARTITIONS_SIZE);
-    if (addr == NULL) {
-        ERROR("[ubootenv] Not enough memory for environment (%u bytes)\n",ENV_PARTITIONS_SIZE);
-        close(fd);
-        return -2;
-    }
-
-    memset(addr,0,ENV_PARTITIONS_SIZE);
-    env_data.image = addr;
-    image = (struct env_image *)addr;
-    env_data.crc = &(image->crc);
-    env_data.data = image->data;
-
-    ret = read(fd ,env_data.image, ENV_PARTITIONS_SIZE);
-    if (ret == (int)ENV_PARTITIONS_SIZE) {
-        crc_calc = crc32(0,(uint8_t *)env_data.data, ENV_SIZE);
-        if (crc_calc != *(env_data.crc)) {
-            ENV_PARTITIONS_SIZE = 0x2000;
-            ENV_SIZE = ENV_PARTITIONS_SIZE - 4;
-            crc_calc = crc32(0,(uint8_t *)env_data.data, ENV_SIZE);
-            if (crc_calc != *(env_data.crc)) {
-                ERROR("[ubootenv] CRC Check ERROR save_crc=%08x,calc_crc = %08x \n",
-                    *env_data.crc, crc_calc);
-                close(fd);
-                return -3;
-            }
-        }
-        attr = env_parse_attribute();
-        if (attr == NULL) {
-            close(fd);
-            return -4;
-        }
-        //bootenv_print();
-    } else {
-        NOTICE("[ubootenv] read error 0x%x \n",ret);
-        close(fd);
-        return -5;
-    }
+  gs_env_shm_info = (struct uenv_img_shm_info *)mmap(
+      NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (gs_env_shm_info == MAP_FAILED) {
+    perror("mmap");
+    goto failure;
+  }
+  close(fd);
+  return gs_env_shm_info->imgdata;
+failure:
+  if (gs_env_shm_info)
+    munmap((char *)gs_env_shm_info, size);
+  if (fd)
     close(fd);
-    return 0;
+  return NULL;
 }
 
-const char * bootenv_get_value(const char * key) {
-    if (!ENT_INIT_DONE) {
-        return NULL;
+static void release_envimg_buffer() {
+  if (gs_env_shm_info == NULL)
+    return;
+
+  if (!gs_shm_available) {
+    free(gs_env_shm_info);
+    gs_env_shm_info = NULL;
+    return;
+  }
+
+  envimg_buffer_lock();
+  bool unlink_finally = --gs_env_shm_info->refcnt <= 0;
+  envimg_buffer_unlock();
+  if (munmap((char *)gs_env_shm_info,
+             gs_env_partition_size + sizeof(struct uenv_img_shm_info)) == -1) {
+    goto failure;
+  }
+
+  if (unlink_finally && unlink(ENV_IMG_SHM_NAME) == -1) {
+    goto failure;
+  }
+  gs_env_shm_info = NULL;
+failure:
+  return;
+}
+
+/* Parse a session kv */
+static env_kv *env_parse_kv(void) {
+  char *ptr = gs_env_data.data;
+  env_kv *attr = &gs_kv_header;
+
+  pthread_mutex_lock(&gs_kv_lock);
+  bool bproc_key = true;
+  bool bproc_next = false;
+  while (ptr < gs_env_data.data + gs_env_data_size) {
+    if (*ptr == '\0')
+      break;
+
+    if (bproc_next) {
+      bproc_next = false;
+      attr->next = (env_kv *)malloc(sizeof(env_kv));
+      if (attr->next == NULL) {
+        ERROR("[ubootenv] exit malloc error \n");
+        break;
+      }
+      attr = attr->next;
+      attr->next = NULL;
+      attr->value = NULL;
+      attr->key[0] = '\0';
     }
 
-    env_attribute *attr = &env_attribute_header;
-    while (attr) {
-        if (!strcmp(key,attr->key)) {
-            return attr->value;
-        }
-        attr = attr->next;
+    char *pend = strchr(ptr, bproc_key ? '=' : '\0');
+    if (!pend) {
+      ERROR("[ubootenv] error '%s' not found, end parsing\n",
+            bproc_key ? "=" : "\\0");
+      break;
     }
+    size_t plen = pend - ptr + 1;
+    size_t maxlen = bproc_key ? sizeof(attr->key) : 4096;
+    if (plen > maxlen) {
+      ERROR("[ubootenv] warning '%s' too long, truncated\n",
+            bproc_key ? "key" : "value");
+      plen = maxlen;
+    }
+    if (bproc_key) {
+      snprintf(attr->key, plen, "%s", ptr);
+      // value should be processed
+      bproc_key = false;
+    } else {
+      attr->value = (char *)malloc(plen);
+      snprintf(attr->value, plen, "%s", ptr);
+      bproc_key = true;
+      bproc_next = true;
+    }
+    ptr = pend + 1;
+  }
+  pthread_mutex_unlock(&gs_kv_lock);
+
+  return &gs_kv_header;
+}
+
+/* serialize the kv list into raw env data */
+static int env_serialize_data(void) {
+  int len;
+  env_kv *attr = &gs_kv_header;
+  char *data = gs_env_data.data;
+  memset(gs_env_data.data, 0, gs_env_data_size);
+  pthread_mutex_lock(&gs_kv_lock);
+  do {
+    len = sprintf(data, "%s=%s", attr->key, attr->value);
+    if (len < 3) {
+      ERROR("[ubootenv] Invalid data\n");
+    } else
+      data += len + 1;
+
+    attr = attr->next;
+  } while (attr);
+  pthread_mutex_unlock(&gs_kv_lock);
+  // update revision
+  gs_current_revision++;
+  gs_env_shm_info->revision = gs_current_revision;
+  return 0;
+}
+
+static void env_release_kv() {
+  pthread_mutex_lock(&gs_kv_lock);
+  if (gs_kv_header.value) {
+    free(gs_kv_header.value);
+    gs_kv_header.value = NULL;
+  }
+  for (env_kv *pAttr = gs_kv_header.next, *pTmp; pAttr != NULL; pAttr = pTmp) {
+    pTmp = pAttr->next;
+    if (pAttr->value) {
+      free(pAttr->value);
+    }
+    free(pAttr);
+  }
+  gs_kv_header.next = NULL;
+  pthread_mutex_unlock(&gs_kv_lock);
+}
+
+static void check_load_kv() {
+  if (gs_current_revision != gs_env_shm_info->revision) {
+    env_release_kv();
+    env_parse_kv();
+    gs_current_revision = gs_env_shm_info->revision;
+  }
+  return;
+}
+
+static int load_bootenv() {
+  int ret = 0;
+  struct env_image *image;
+  char *addr;
+
+  addr = acquire_envimg_buffer();
+  if (addr == NULL) {
+    ERROR("[ubootenv] Not enough memory for environment (%u bytes)\n",
+          gs_env_partition_size);
+    return -1;
+  }
+
+  envimg_buffer_lock();
+  gs_env_data.image = addr;
+  image = (struct env_image *)addr;
+  gs_env_data.crc = &(image->crc);
+  gs_env_data.data = image->data;
+
+  if (gs_env_shm_info->refcnt == 0) {
+    int fd;
+    if ((fd = open(gs_partition_name, O_RDONLY)) < 0) {
+      ERROR("[ubootenv] open devices error: %s\n", strerror(errno));
+      ret = -1;
+      goto failure;
+    }
+    int32_t bytes = read(fd, gs_env_data.image, gs_env_partition_size);
+    close(fd);
+    if (bytes != (int32_t)gs_env_partition_size) {
+      NOTICE("[ubootenv] read error 0x%x \n", bytes);
+      ret = -2;
+      goto failure;
+    }
+  }
+
+  gs_current_revision = gs_env_shm_info->revision;
+  uint32_t crc_calc = crc32(gs_env_data.data, gs_env_data_size);
+  if (crc_calc != *(gs_env_data.crc)) {
+    ERROR("[ubootenv] CRC Check ERROR save_crc=%08x,calc_crc = %08x \n",
+          *gs_env_data.crc, crc_calc);
+    ret = -3;
+    goto failure;
+  }
+  if (env_parse_kv() == NULL) {
+    ret = -4;
+    goto failure;
+  }
+  // bootenv_print();
+failure:
+  if (ret == 0) {
+    gs_env_shm_info->refcnt++;
+  } else {
+    // reset to zero if error happens for the next retries
+    gs_env_shm_info->refcnt = 0;
+  }
+  envimg_buffer_unlock();
+  return ret;
+}
+
+static const char *bootenv_get_value(const char *key) {
+  if (!gs_init_done) {
     return NULL;
+  }
+
+  pthread_mutex_lock(&gs_kv_lock);
+  env_kv *attr;
+  for (attr = &gs_kv_header; attr && strcmp(key, attr->key); attr = attr->next)
+    ;
+  pthread_mutex_unlock(&gs_kv_lock);
+  return attr ? attr->value : NULL;
 }
 
 /*
 creat_args_flag : if true , if envvalue don't exists Creat it .
               if false , if envvalue don't exists just exit .
 */
-int bootenv_set_value(const char * key,  const char * value,int creat_args_flag) {
-    env_attribute *attr = &env_attribute_header;
-    env_attribute *last = attr;
-    while (attr) {
-        if (!strcmp(key,attr->key)) {
-            if (attr->value != NULL) {
-                free(attr->value);
-            }
-            attr->value = (char *)malloc(strlen(value)+1);
-            memset(attr->value,0,strlen(value)+1);
-            strcpy(attr->value,value);
-            return 2;
-        }
-        last = attr;
-        attr = attr->next;
+static int bootenv_set_value(const char *key, const char *value,
+                             int creat_args_flag) {
+  int ret = 0;
+  env_kv *attr = &gs_kv_header;
+  env_kv *last = attr;
+  pthread_mutex_lock(&gs_kv_lock);
+  while (attr) {
+    if (!strcmp(key, attr->key)) {
+      if (attr->value != NULL) {
+        free(attr->value);
+      }
+      attr->value = (char *)malloc(strlen(value) + 1);
+      strcpy(attr->value, value);
+      ret = 2;
+      goto out;
     }
+    last = attr;
+    attr = attr->next;
+  }
 
-    if (creat_args_flag) {
-        NOTICE("[ubootenv] ubootenv.var.%s not found, create it.\n", key);
-        /*******Creat a New args*********************/
-        attr =(env_attribute *)malloc(sizeof(env_attribute));
-        last->next = attr;
-        memset(attr, 0, sizeof(env_attribute));
-        strncpy(attr->key,key,sizeof(attr->key)-1);
-        attr->key[sizeof(attr->key)-1] = '\0';
-        attr->value = (char *)malloc(strlen(value)+1);
-        memset(attr->value,0,strlen(value)+1);
-        strcpy(attr->value,value);
-        return 1;
-    }else {
-        return 0;
-    }
+  if (creat_args_flag) {
+    NOTICE("[ubootenv] ubootenv.var.%s not found, create it.\n", key);
+    /*******Creat a New args*********************/
+    attr = (env_kv *)malloc(sizeof(env_kv));
+    attr->next = NULL;
+    last->next = attr;
+    snprintf(attr->key, sizeof(attr->key), "%s", key);
+    attr->value = (char *)malloc(strlen(value) + 1);
+    strcpy(attr->value, value);
+    ret = 1;
+  }
+out:
+  pthread_mutex_unlock(&gs_kv_lock);
+  return ret;
 }
 
-int save_bootenv() {
-    int fd;
-    int err;
-    struct erase_info_user erase;
-    struct mtd_info_user info;
-    unsigned char *data = NULL;
-    env_revert_attribute();
-    *(env_data.crc) = crc32(0, (uint8_t *)env_data.data, ENV_SIZE);
+static int save_bootenv() {
+  int fd;
+  int err;
+  struct erase_info_user erase;
+  struct mtd_info_user info;
+  unsigned char *data = NULL;
+  env_serialize_data();
+  *(gs_env_data.crc) = crc32(gs_env_data.data, gs_env_data_size);
 
-    if ((fd = open (BootenvPartitionName, O_RDWR)) < 0) {
-        ERROR("[ubootenv] open devices error\n");
-        return -1;
-    }
+  if ((fd = open(gs_partition_name, O_RDWR)) < 0) {
+    ERROR("[ubootenv] open devices error\n");
+    return -1;
+  }
 
-    if (strstr (BootenvPartitionName, "mtd")) {
-        memset(&info, 0, sizeof(info));
-        err = ioctl(fd, MEMGETINFO, &info);
-        if (err < 0) {
-            ERROR("[ubootenv] Get MTD info error\n");
-            close(fd);
-            return -4;
-        }
-
-        erase.start = 0;
-        if (info.erasesize > ENV_PARTITIONS_SIZE) {
-            data = (unsigned char*)malloc(info.erasesize);
-            if (data == NULL) {
-                ERROR("[ubootenv] Out of memory!!!\n");
-                close(fd);
-                return -5;
-            }
-            memset(data, 0, info.erasesize);
-            err = read(fd, (void*)data, info.erasesize);
-            if (err != (int)info.erasesize) {
-                ERROR("[ubootenv] Read access failed !!!\n");
-                free(data);
-                close(fd);
-                return -6;
-            }
-            memcpy(data, env_data.image, ENV_PARTITIONS_SIZE);
-            erase.length = info.erasesize;
-        }
-        else {
-            erase.length = ENV_PARTITIONS_SIZE;
-        }
-
-        err = ioctl (fd,MEMERASE,&erase);
-        if (err < 0) {
-            ERROR ("[ubootenv] MEMERASE ERROR %d\n",err);
-            close(fd);
-            if (info.erasesize > ENV_PARTITIONS_SIZE) {
-            free(data);
-            }
-            return  -2;
-        }
-
-        if (info.erasesize > ENV_PARTITIONS_SIZE) {
-            lseek(fd, 0L, SEEK_SET);
-            err = write(fd , data, info.erasesize);
-            free(data);
-        }
-        else
-            err = write(fd ,env_data.image, ENV_PARTITIONS_SIZE);
-
-    } else {
-        //emmc and nand needn't erase
-        err = write(fd ,env_data.image, ENV_PARTITIONS_SIZE);
-    }
-
-    FILE *fp = NULL;
-    fp = fdopen(fd, "r+");
-    if (fp == NULL) {
-        ERROR("fdopen failed!\n");
-        close(fd);
-        return -3;
-    }
-
-    fflush(fp);
-    fsync(fd);
-    fclose(fp);
+  if (strstr(gs_partition_name, "mtd")) {
+    memset(&info, 0, sizeof(info));
+    err = ioctl(fd, MEMGETINFO, &info);
     if (err < 0) {
-        ERROR ("[ubootenv] ERROR write, size %d \n", ENV_PARTITIONS_SIZE);
-        return -3;
-    }
-    return 0;
-}
-
-#if 0
-static int is_bootenv_varible(const char* prop_name) {
-    if (!prop_name || !(*prop_name))
-        return 0;
-
-    if (!(*PROFIX_UBOOTENV_VAR))
-        return 0;
-
-    if (strncmp(prop_name, PROFIX_UBOOTENV_VAR, strlen(PROFIX_UBOOTENV_VAR)) == 0
-        && strlen(prop_name) > strlen(PROFIX_UBOOTENV_VAR) )
-        return 1;
-
-    return 0;
-}
-
-static void bootenv_prop_init(const char *key, const char *value, void *cookie) {
-#if 0
-    if (is_bootenv_varible(key)) {
-        const char* varible_name = key + strlen(PROFIX_UBOOTENV_VAR);
-        const char *varible_value = bootenv_get_value(varible_name);
-        if (!varible_value)
-            varible_value = "";
-        if (strcmp(varible_value, value)) {
-            property_set(key, varible_value);
-            (*((int*)cookie))++;
-        }
-    }
-#endif
-}
-
-int bootenv_property_list(void (*propfn)(const char *key, const char *value, void *cookie),
-                void *cookie) {
-#if 0
-    char name[PROP_NAME_MAX];
-    char value[PROP_VALUE_MAX];
-    const prop_info *pi;
-    unsigned n;
-
-    for (n = 0; (pi = __system_property_find_nth(n)); n++) {
-        __system_property_read(pi, name, value);
-        propfn(name, value, cookie);
-    }
- #endif
-    return 0;
-}
-#endif
-
-void bootenv_props_load() {
-#if 0
-    int count = 0;
-
-    bootenv_property_list(bootenv_prop_init, (void*)&count);
-    char bootcmd[32];
-    char val[PROP_VALUE_MAX]={0};
-    sprintf(bootcmd, "%sbootcmd", PROFIX_UBOOTENV_VAR);
-    property_get(bootcmd, val, "");
-    if (val[0] == 0) {
-        const char* value = bootenv_get_value("bootcmd");
-        INFO("[ubootenv] key: [%s] value: [%s]\n", bootcmd, value);
-        if (value) {
-            property_set(bootcmd, value);
-            count++;
-        }
+      ERROR("[ubootenv] Get MTD info error\n");
+      close(fd);
+      return -4;
     }
 
-    INFO("[ubootenv] set property count: %d\n", count);
-#endif
-    ENT_INIT_DONE = 1;
+    erase.start = 0;
+    if (info.erasesize > gs_env_partition_size) {
+      data = (unsigned char *)malloc(info.erasesize);
+      if (data == NULL) {
+        ERROR("[ubootenv] Out of memory!!!\n");
+        close(fd);
+        return -5;
+      }
+      memset(data, 0, info.erasesize);
+      err = read(fd, (void *)data, info.erasesize);
+      if (err != (int)info.erasesize) {
+        ERROR("[ubootenv] Read access failed !!!\n");
+        free(data);
+        close(fd);
+        return -6;
+      }
+      memcpy(data, gs_env_data.image, gs_env_partition_size);
+      erase.length = info.erasesize;
+    } else {
+      erase.length = gs_env_partition_size;
+    }
+
+    err = ioctl(fd, MEMERASE, &erase);
+    if (err < 0) {
+      ERROR("[ubootenv] MEMERASE ERROR %d\n", err);
+      close(fd);
+      if (info.erasesize > gs_env_partition_size) {
+        free(data);
+      }
+      return -2;
+    }
+
+    if (info.erasesize > gs_env_partition_size) {
+      lseek(fd, 0L, SEEK_SET);
+      err = write(fd, data, info.erasesize);
+      free(data);
+    } else {
+      err = write(fd, gs_env_data.image, gs_env_partition_size);
+    }
+
+  } else {
+    // emmc and nand needn't erase
+    err = write(fd, gs_env_data.image, gs_env_partition_size);
+  }
+
+  FILE *fp = NULL;
+  fp = fdopen(fd, "r+");
+  if (fp == NULL) {
+    ERROR("fdopen failed!\n");
+    close(fd);
+    return -3;
+  }
+
+  fflush(fp);
+  fsync(fd);
+  fclose(fp);
+  if (err < 0) {
+    ERROR("[ubootenv] ERROR write, size %d \n", gs_env_partition_size);
+    return -3;
+  }
+  return 0;
 }
 
 int bootenv_init(void) {
-    struct stat st;
-    struct mtd_info_user info;
-    int err;
-    int fd;
-    int ret = -1;
-    int i = 0;
-    /*
-    int id = mtd_name_to_number("ubootenv");
-    if (id >= 0) {
-        sprintf(BootenvPartitionName, "/dev/mtd/mtd%d", id);
-        if ((fd = open (BootenvPartitionName, O_RDWR)) < 0) {
-            ERROR("open device(%s) error : %s \n",BootenvPartitionName,strerror(errno) );
-            return -2;
-        }
-        memset(&info, 0, sizeof(info));
-        err = ioctl(fd, MEMGETINFO, &info);
-        if (err < 0) {
-            ERROR("get MTD info error\n");
-            close(fd);
-            return -3;
-        }
-        ENV_EASER_SIZE = info.erasesize;
-        ENV_PARTITIONS_SIZE = info.size;
-        ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(long);
-
-    } else */if (!stat("/dev/nand_env", &st)) {
-        sprintf (BootenvPartitionName, "/dev/nand_env");
-        ENV_PARTITIONS_SIZE = 0x10000;
-#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) || defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
-        ENV_PARTITIONS_SIZE = 0x10000;
-#endif
-        ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(uint32_t);
-        INFO("[ubootenv] using /dev/nand_env with size(%d)(%d)", ENV_PARTITIONS_SIZE,ENV_SIZE);
-    } else if (!stat("/dev/env", &st)) {
-        INFO("[ubootenv] stat /dev/env OK\n");
-        sprintf (BootenvPartitionName, "/dev/env");
-        ENV_PARTITIONS_SIZE = 0x10000;
-#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) || defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
-        ENV_PARTITIONS_SIZE = 0x10000;
-#endif
-        ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(uint32_t);
-        INFO("[ubootenv] using /dev/env with size(%d)(%d)", ENV_PARTITIONS_SIZE,ENV_SIZE);
-    } else if (!stat("/dev/block/env", &st)) {
-        INFO("[ubootenv] stat /dev/block/env OK\n");
-        sprintf (BootenvPartitionName, "/dev/block/env");
-        ENV_PARTITIONS_SIZE = 0x10000;
-#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) || defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
-        ENV_PARTITIONS_SIZE = 0x10000;
-#endif
-        ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(uint32_t);
-        INFO("[ubootenv] using /dev/block/env with size(%d)(%d)", ENV_PARTITIONS_SIZE,ENV_SIZE);
-    } else if (!stat("/dev/block/ubootenv", &st)) {
-        sprintf(BootenvPartitionName, "/dev/block/ubootenv");
-        if ((fd = open(BootenvPartitionName, O_RDWR)) < 0) {
-            ERROR("[ubootenv] open device(%s) error\n",BootenvPartitionName );
-            return -2;
-        }
-
-        memset(&info, 0, sizeof(info));
-        err = ioctl(fd, MEMGETINFO, &info);
-        if (err < 0) {
-            fprintf (stderr,"get MTD info error\n");
-            close(fd);
-            return -3;
-        }
-
-        ENV_EASER_SIZE  = info.erasesize;//0x20000;//128K
-        ENV_PARTITIONS_SIZE = info.size;//0x8000;
-        ENV_SIZE = ENV_PARTITIONS_SIZE - sizeof(long);
-        close(fd);
-    }
-
-    while (i < MAX_UBOOT_RWRETRY && ret < 0) {
-        i ++;
-        ret = read_bootenv();
-        if (ret < 0)
-            ERROR("[ubootenv] Cannot read %s: %d.\n", BootenvPartitionName, ret);
-        if (ret < -2)
-            free(env_data.image);
-    }
-
-    if (i >= MAX_UBOOT_RWRETRY) {
-        ERROR("[ubootenv] read %s failed \n", BootenvPartitionName);
-        return -2;
-    }
-
-#if 0 //need yuzg
-    char prefix[PROP_VALUE_MAX] = {0};
-    property_get("ro.ubootenv.varible.prefix", prefix, "");
-    if (prefix[0] == 0) {
-        strcpy(prefix , "ubootenv.var");
-        INFO("[ubootenv] set property ro.ubootenv.varible.prefix: %s\n", prefix);
-        property_set("ro.ubootenv.varible.prefix", prefix);
-    }
-
-    if (strlen(prefix) > 16) {
-        ERROR("[ubootenv] Cannot r/w ubootenv varibles - prefix length > 16.\n");
-        return -4;
-    }
-
-    sprintf(PROFIX_UBOOTENV_VAR, "%s.", prefix);
-    INFO("[ubootenv] ubootenv varible prefix is: %s\n", prefix);
-#endif
-#if 0
-    int count = 0;
-    property_list(init_bootenv_prop, (void*)&count);
-    char bootcmd[32];
-    char val[PROP_VALUE_MAX]={0};
-    sprintf(bootcmd, "%s.bootcmd", prefix);
-    property_get(bootcmd, val);
-    if (val[0] == 0) {
-        const char* value = bootenv_get_value("bootcmd");
-        INFO("value: %s\n", value);
-        if (value) {
-            property_set(bootcmd, value);
-            count ++;
-        }
-    }
-
-    INFO("Get %d varibles from %s succeed!\n", count, BootenvPartitionName);
-#endif
-
-    bootenv_props_load();
+  struct stat st;
+  struct mtd_info_user info;
+  int err;
+  int fd;
+  int ret = -1;
+  int i = 0;
+  if (gs_init_done)
     return 0;
-}
-
-int bootenv_reinit(void) {
-   //mutex_lock(&env_lock);
-   if (env_data.image) {
-       free(env_data.image);
-       env_data.image = NULL;
-       env_data.crc = NULL;
-       env_data.data = NULL;
-   }
-   env_attribute * pAttr = env_attribute_header.next;
-   memset(&env_attribute_header, 0, sizeof(env_attribute));
-   env_attribute * pTmp = NULL;
-   while (pAttr) {
-       pTmp = pAttr;
-       pAttr = pAttr->next;
-       free(pTmp->value);
-       free(pTmp);
-   }
-   bootenv_init();
-   //mutex_unlock(&env_lock);
-   return 0;
-}
-
-int bootenv_update(const char* name, const char* value) {
-    if (!ENT_INIT_DONE) {
-        ERROR("[ubootenv] bootenv do not init\n");
-        return -1;
-    }
-
-    INFO("[ubootenv] update_bootenv_varible name [%s]: value [%s] \n",name,value);
-    /*const char* varible_name = 0;
-    if (strcmp(name, "ubootenv.var.bootcmd") == 0) {
-        varible_name = "bootcmd";
-    } else {
-        if (!is_bootenv_varible(name)) {
-            //should assert here.
-            ERROR("[ubootenv] %s is not a ubootenv varible.\n", name);
-            return -2;
-        }
-        varible_name = name + strlen(PROFIX_UBOOTENV_VAR);
-    }*/
-
-    const char *varible_value = bootenv_get_value(name);
-    if (!varible_value)
-        varible_value = "";
-
-    if (!strcmp(value, varible_value))
-        return 0;
-
-    bootenv_set_value(name, value, 1);
-
-    int i = 0;
-    int ret = -1;
-    while (i < MAX_UBOOT_RWRETRY && ret < 0) {
-        i ++;
-        ret = save_bootenv();
-        if (ret < 0)
-            ERROR("[ubootenv] Cannot write %s: %d.\n", BootenvPartitionName, ret);
-    }
-
-    if (i < MAX_UBOOT_RWRETRY) {
-        INFO("[ubootenv] Save ubootenv to %s succeed!\n",  BootenvPartitionName);
-    }
-
-#if BOOT_ARGS_CHECK
-    NOTICE( "[ubootenv] E03LOG ----update_bootenv_varible %s = %s \n" , name , value );
-    if (strcmp(name, ARGS_ETHADDR_WHOLE) == 0 ||
-        strcmp(name, ARGS_LICENCE_WHOLE) == 0 ||
-        strcmp(name, ARGS_DEVICE_ID_HOLE) == 0 ){
-        char * p_ethaddr = bootenv_get_value(ARGS_ETHADDR) ;
-        char * p_licence = bootenv_get_value(ARGS_LICENCE);
-        char * p_device_id = bootenv_get_value(ARGS_DEVICE_ID) ;
-        NOTICE( "[ubootenv] E03LOG ----update_bootenv_varible write_args_to_file   \n");
-        if ( NULL != p_ethaddr && NULL != p_licence && NULL != p_device_id )
-            write_args_to_file();
-    }
+  if (!stat("/dev/nand_env", &st)) {
+    sprintf(gs_partition_name, "/dev/nand_env");
+    gs_env_partition_size = 0x10000;
+#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) ||                      \
+    defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
+    gs_env_partition_size = 0x10000;
 #endif
-    return ret;
-}
-
-const char * bootenv_get(const char * key) {
-    /*if (!is_bootenv_varible(key)) {
-        //should assert here.
-        ERROR("[ubootenv] %s is not a ubootenv varible.\n", key);
-        return NULL;
-    }
-    const char* varible_name = key + strlen(PROFIX_UBOOTENV_VAR);*/
-    return bootenv_get_value(key);
-}
-
-#if BOOT_ARGS_CHECK
-
-char mac_address[20] = {0};
-char licence[36] = {0};
-char device_id[42] = {0};
-#define BURN_ARGS_SIZE  128
-#define BURN_ARGS_FILENAME "/param/burn_args.arg"
-#define ARGS_ETHADDR "ethaddr"
-#define ARGS_ETHADDR_WHOLE "ubootenv.var.ethaddr"
-#define ARGS_LICENCE "igrsid"
-#define ARGS_LICENCE_WHOLE "ubootenv.var.igrsid"
-#define ARGS_DEVICE_ID "huanid"
-#define ARGS_DEVICE_ID_HOLE "ubootenv.var.huanid"
-
-typedef struct burn_args {
-    uint32_t crc; /* CRC32 over data bytes */
-    unsigned char data[BURN_ARGS_SIZE]; /* Environment data */
-} burn_t;
-
-static struct burn_args  burn_args_data ;
-
-int read_args_from_file() {
-    char *data ;
-    uint32_t crc_calc;
-    char * write_buff = mac_address ;
-    int file_size = 0 , read_pos = 0 , write_pos = 0 ;
-    data = read_file( BURN_ARGS_FILENAME , &file_size);
-
-    if (!data) {
-        NOTICE( "[ubootenv] E03LOG %s failed!\n" , BURN_ARGS_FILENAME );
-        return -1;
-    }
-    else {
-        NOTICE( "[ubootenv] E03LOG read_default_boot_args success size: [%d]  burn_args_data size : [%d] ;  %s \n" , file_size , sizeof(burn_args_data) , data );
-        if ( file_size > sizeof(burn_args_data) ) {
-            NOTICE( "[ubootenv] E03LOG file size :[%d] > burn_args_data size: [%d] \n" , file_size , sizeof(burn_args_data) );
-            //return -3 ;
-        }
-        memset((void*)&burn_args_data,0,sizeof(burn_args_data));
-        memcpy( (void *)&burn_args_data , data , sizeof(burn_args_data) );
-        crc_calc = crc32 (0,burn_args_data.data, BURN_ARGS_SIZE);
-        if (crc_calc != burn_args_data.crc) {
-            NOTICE( "[ubootenv] E03LOG check args failed! file crs32:[%d]  ,  real crs32:[%d]\n" , burn_args_data.crc , crc_calc );
-            return -2 ;
-        }
-        else {
-            NOTICE( "[ubootenv] E03LOG check args accordant ! file crs32:[%d]  ,  real crs32:[%d]\n" , burn_args_data.crc , crc_calc );
-        }
+    gs_env_data_size = gs_env_partition_size - sizeof(uint32_t);
+    INFO("[ubootenv] using /dev/nand_env with size(%d)(%d)\n",
+         gs_env_partition_size, gs_env_data_size);
+  } else if (!stat("/dev/env", &st)) {
+    INFO("[ubootenv] stat /dev/env OK\n");
+    sprintf(gs_partition_name, "/dev/env");
+    gs_env_partition_size = 0x10000;
+#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) ||                      \
+    defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
+    gs_env_partition_size = 0x10000;
+#endif
+    gs_env_data_size = gs_env_partition_size - sizeof(uint32_t);
+    INFO("[ubootenv] using /dev/env with size(%d)(%d)\n", gs_env_partition_size,
+         gs_env_data_size);
+  } else if (!stat("/dev/block/env", &st)) {
+    INFO("[ubootenv] stat /dev/block/env OK\n");
+    sprintf(gs_partition_name, "/dev/block/env");
+    gs_env_partition_size = 0x10000;
+#if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) ||                      \
+    defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
+    gs_env_partition_size = 0x10000;
+#endif
+    gs_env_data_size = gs_env_partition_size - sizeof(uint32_t);
+    INFO("[ubootenv] using /dev/block/env with size(%d)(%d)\n",
+         gs_env_partition_size, gs_env_data_size);
+  } else if (!stat("/dev/block/ubootenv", &st)) {
+    sprintf(gs_partition_name, "/dev/block/ubootenv");
+    if ((fd = open(gs_partition_name, O_RDWR)) < 0) {
+      ERROR("[ubootenv] open device(%s) error\n", gs_partition_name);
+      return -2;
     }
 
-    for ( read_pos = 0 ; read_pos < file_size ; read_pos++ ) {
-        if ( 0x0A == burn_args_data.data[read_pos] ) {
-            if ( write_buff == mac_address ) {
-                NOTICE( "[ubootenv] E03LOG mac of file %s \n" , write_buff  );
-                write_buff = licence ;
-            }
-            else if ( write_buff == licence ) {
-                NOTICE( "[ubootenv] E03LOG licence of file %s \n" , write_buff  );
-                write_buff = device_id ;
-            }
-            else {
-                NOTICE( "[ubootenv] E03LOG device_id of file %s \n" , write_buff  );
-                break;
-            }
-            write_pos = 0 ;
-            continue ;
-        }
-        write_buff[write_pos] = burn_args_data.data[read_pos] ;
-        write_pos++ ;
-    }
-    return 0;
-}
-
-int write_args_to_file() {
-    int fd;
-    int err;
-    if ((fd = open (BURN_ARGS_FILENAME, O_RDWR| O_CREAT )) < 0) {
-        NOTICE( "[ubootenv] E03LOG ----open devices error\n");
-        return -1;
-    }
-
-    if (lseek(fd, 0, SEEK_SET) != 0) {
-        NOTICE( "[ubootenv] E03LOG lseek ERROR %d\n",err);
-    }
-    memset((void*)&burn_args_data,0,sizeof(burn_args_data));
-    sprintf( burn_args_data.data , "%s\n%s\n%s\n", bootenv_get_value(ARGS_ETHADDR),bootenv_get_value(ARGS_LICENCE),bootenv_get_value(ARGS_DEVICE_ID)) ;
-    burn_args_data.crc = crc32 (0,burn_args_data.data, BURN_ARGS_SIZE);
-
-    NOTICE( "[ubootenv] E03LOG  write args crc: [%d]   \n %s \n " , burn_args_data.crc , burn_args_data.data ) ;
-    err = write(fd ,(void *)&burn_args_data, sizeof(burn_args_data));
-    close(fd);
+    memset(&info, 0, sizeof(info));
+    err = ioctl(fd, MEMGETINFO, &info);
     if (err < 0) {
-        NOTICE( "[ubootenv] E03LOG write args----ERROR  write, size %d \n",err);
-        return -3;
+      fprintf(stderr, "get MTD info error\n");
+      close(fd);
+      return -3;
     }
-    else {
-        NOTICE( "[ubootenv] E03LOG write args----success , size %d \n",err);
-    }
-    return 0 ;
+
+    gs_env_erase_size = info.erasesize; // 0x20000;//128K
+    gs_env_partition_size = info.size;  // 0x8000;
+    gs_env_data_size = gs_env_partition_size - sizeof(long);
+    close(fd);
+  }
+
+  while (i < MAX_UBOOT_RWRETRY && ret < 0) {
+    i++;
+    ret = load_bootenv();
+    if (ret < 0)
+      ERROR("[ubootenv] Cannot read %s: %d.\n", gs_partition_name, ret);
+    if (ret < -2)
+      release_envimg_buffer();
+  }
+
+  if (i >= MAX_UBOOT_RWRETRY) {
+    ERROR("[ubootenv] read %s failed \n", gs_partition_name);
+    return -2;
+  }
+
+  gs_init_done = true;
+
+  return 0;
 }
 
-void check_boot_args() {
-    int ret = read_args_from_file();
-    char * p_ethaddr = bootenv_get_value(ARGS_ETHADDR) ;
-    char * p_licence = bootenv_get_value(ARGS_LICENCE);
-    char * p_device_id = bootenv_get_value(ARGS_DEVICE_ID) ;
+int bootenv_update(const char *name, const char *value) {
+  if (!gs_init_done) {
+    ERROR("[ubootenv] not inited\n");
+    return -1;
+  }
 
-    if ( 0 != ret ) {
-        if ( NULL != p_ethaddr && NULL != p_licence && NULL != p_device_id )
-            write_args_to_file();
-        NOTICE( "[ubootenv] E03LOG read args from file failed . write boot args to file \n" ) ;
-        return ;
-    }
+  envimg_buffer_lock();
+  check_load_kv();
 
-    if ( NULL == p_ethaddr || 0 != strcmp( mac_address ,  p_ethaddr )) {
-        NOTICE( "[ubootenv] E03LOG check mac address failed . file: %s  boot: %s \n" , mac_address ,  bootenv_get_value(ARGS_ETHADDR)  ) ;
-        update_bootenv_varible( ARGS_ETHADDR_WHOLE, mac_address );
-    }
-    else {
-        NOTICE( "[ubootenv] E03LOG check mac address accordant . file: %s  boot: %s \n" , mac_address ,  bootenv_get_value(ARGS_ETHADDR)  ) ;
-    }
+  INFO("[ubootenv] update_bootenv_variable name [%s]: value [%s] \n", name,
+       value);
 
-    if ( NULL == p_licence || 0 != strcmp( licence,  p_licence )) {
-        NOTICE( "[ubootenv] E03LOG check licence failed . file: %s  boot: %s \n" , licence ,  bootenv_get_value(ARGS_LICENCE)  ) ;
-        update_bootenv_varible( ARGS_LICENCE_WHOLE, licence );
-    }
-    else {
-        NOTICE( "[ubootenv] E03LOG check licence accordant . file: %s  boot: %s \n" , licence ,  bootenv_get_value(ARGS_LICENCE)  ) ;
-    }
+  const char *variable_value = bootenv_get_value(name);
+  if (!variable_value)
+    variable_value = "";
 
-    if ( NULL == p_device_id || 0 != strcmp( device_id,  p_device_id  ) ) {
-        NOTICE( "[ubootenv] E03LOG check device_id failed . file: %s  boot: %s \n" , device_id ,  bootenv_get_value(ARGS_DEVICE_ID)  ) ;
-        update_bootenv_varible( ARGS_DEVICE_ID_HOLE, device_id );
-    }
-    else {
-        NOTICE( "[ubootenv] E03LOG check device_id accordant . file: %s  boot: %s \n" , device_id ,  bootenv_get_value(ARGS_DEVICE_ID)  ) ;
-    }
+  if (!strcmp(value, variable_value)) {
+    envimg_buffer_unlock();
+    return 0;
+  }
+
+  bootenv_set_value(name, value, 1);
+
+  int i = 0;
+  int ret = -1;
+  while (i < MAX_UBOOT_RWRETRY && ret < 0) {
+    i++;
+    ret = save_bootenv();
+    if (ret < 0)
+      ERROR("[ubootenv] Cannot write %s: %d.\n", gs_partition_name, ret);
+  }
+
+  if (i < MAX_UBOOT_RWRETRY) {
+    INFO("[ubootenv] Save ubootenv to %s succeed!\n", gs_partition_name);
+  }
+
+  envimg_buffer_unlock();
+  return ret;
 }
 
-#endif
+const char *bootenv_get(const char *key) {
+  if (!gs_init_done) {
+    ERROR("[ubootenv] not inited\n");
+    return NULL;
+  }
+  envimg_buffer_lock();
+  check_load_kv();
+  const char *v = bootenv_get_value(key);
+  envimg_buffer_unlock();
+  return v;
+}
+
+void bootenv_print(void) {
+  pthread_mutex_lock(&gs_kv_lock);
+  env_kv *attr = &gs_kv_header;
+  while (attr != NULL) {
+    SYS_LOGI("[ubootenv] key: [%s]\n", attr->key);
+    SYS_LOGI("[ubootenv] value: [%s]\n\n", attr->value);
+    attr = attr->next;
+  }
+  pthread_mutex_unlock(&gs_kv_lock);
+}
+
+__attribute__((destructor)) void _deinit() {
+  if (!gs_init_done)
+    return;
+  release_envimg_buffer();
+  gs_env_data.image = NULL;
+  gs_env_data.crc = NULL;
+  gs_env_data.data = NULL;
+  env_release_kv();
+}
 
