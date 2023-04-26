@@ -558,7 +558,7 @@ static int set_bootloader_message_block(const struct bootloader_message *in) {
 
 int get_store_device() {
     int ret = 0;
-    ret = access("/proc/inand", F_OK);
+    ret = access("/sys/block/mmcblk0", F_OK);
     if (ret == 0 ) {
         printf("emmc device!\n");
         return 0;
