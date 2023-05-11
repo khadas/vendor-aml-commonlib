@@ -26,6 +26,7 @@ clean:
 	rm -f $(OUT_DIR)/uenv
 
 install:
+	install -m 755 $(OUT_DIR)/$(LIB) $(TARGET_DIR)/usr/lib
 	install -m 755 $(OUT_DIR)/$(LIB) $(STAGING_DIR)/usr/lib
 	install -m 755 $(OUT_DIR)/uenv $(TARGET_DIR)/usr/bin
 	install -m 644 $(INCLUDE) $(STAGING_DIR)/usr/include
