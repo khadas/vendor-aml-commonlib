@@ -575,9 +575,9 @@ static void get_module_arg(const module_arg *arg, char *str, int type)
 			sprintf(str, "firmware_path=%s/%s nvram_path=%s/%s", CYPRESS_FIRMWARE_PATH, arg->firmware_path, CYPRESS_FIRMWARE_PATH, arg->nvram_path);
 #else
 		if (type == TYPE_AP)
-			sprintf(str, "firmware_path=%s/%s nvram_path=%s/%s", BROADCOM_FIRMWARE_PATH, arg->firmware_ap_path, BROADCOM_FIRMWARE_PATH, arg->nvram_path);
+			sprintf(str, "firmware_path=/../..%s/%s nvram_path=/../..%s/%s", BROADCOM_FIRMWARE_PATH, arg->firmware_ap_path, BROADCOM_FIRMWARE_PATH, arg->nvram_path);
 		else
-			sprintf(str, "firmware_path=%s/%s nvram_path=%s/%s", BROADCOM_FIRMWARE_PATH, arg->firmware_path, BROADCOM_FIRMWARE_PATH, arg->nvram_path);
+			sprintf(str, "firmware_path=/../..%s/%s nvram_path=/../..%s/%s", BROADCOM_FIRMWARE_PATH, arg->firmware_path, BROADCOM_FIRMWARE_PATH, arg->nvram_path);
 #endif
 		break;
 	}
