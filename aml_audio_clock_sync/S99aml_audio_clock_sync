@@ -1,0 +1,22 @@
+#! /bin/sh
+
+start_correct_mclk() {
+	usr/bin/aml_audio_clock_sync -i=4 -o=2 -e=1&
+}
+
+case "$1" in
+	start)
+		start_correct_mclk
+	;;
+	stop)
+		/usr/bin/killall -9 aml_audio_clock_sync
+	;;
+	restart)
+	$0 stop
+	$0 start
+	;;
+	*)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+	;;
+esac
