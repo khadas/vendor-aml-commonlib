@@ -495,6 +495,8 @@ int bootenv_init(void) {
 #if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) ||                      \
     defined(GXTVBB_ENVSIZE) || defined(GXL_ENVSIZE)
     gs_env_partition_size = 0x10000;
+#elif defined(A1_ENVSIZE)
+    gs_env_partition_size = 0x2000;
 #endif
     gs_env_data_size = gs_env_partition_size - sizeof(uint32_t);
     INFO("[ubootenv] using /dev/nand_env with size(%d)(%d)\n",
