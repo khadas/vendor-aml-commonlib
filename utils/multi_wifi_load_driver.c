@@ -476,6 +476,21 @@ static const dongle_info dongle_registerd[] = {
 		"country_code=WW conf_path=/w1u vmac0=wlan0 vmac1=p2p0 vif0opmode=1 vif1opmode=2 con_mode=0x06"
 	},
 	{
+		"0640",
+		"w2_comm",
+		"w2_comm.ko",
+		AMLOGIC_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type = MODULE_ARG_OTHER,
+			.arg = "bus_type=sdio",
+		},
+		"w265s1",
+		0xffff,
+		"w2",
+		"w2.ko",
+		""
+	},
+	{
 		"7603",
 		"wlan_mt7663_sdio",
 		"wlan_mt7663_sdio.ko",
