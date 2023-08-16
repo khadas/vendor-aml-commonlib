@@ -31,8 +31,8 @@
 #define MAX_UBOOT_RWRETRY 5
 
 typedef struct env_image {
-  uint32_t crc; /* CRC32 over data bytes	*/
-  char data[];  /* Environment data		*/
+  uint32_t crc; /* CRC32 over data bytes */
+  char data[];  /* Environment data */
 } env_image_t;
 
 typedef struct environment {
@@ -480,6 +480,74 @@ static int save_bootenv() {
   return 0;
 }
 
+#define MAX_MTD_PARTITIONS 20
+static struct {
+    char name[16];
+    int number;
+} mtd_part_map[MAX_MTD_PARTITIONS];
+
+static int mtd_part_count = -1;
+
+static void find_mtd_partitions(void)
+{
+    int fd;
+    char buf[1024];
+    char *pmtdbufp;
+    ssize_t pmtdsize;
+    int r;
+    fd = open("/proc/mtd", O_RDONLY);
+    if (fd < 0)
+        return;
+    buf[sizeof(buf) - 1] = '\0';
+    pmtdsize = read(fd, buf, sizeof(buf) - 1);
+    pmtdbufp = buf;
+    while (pmtdsize > 0) {
+        int mtdnum, mtdsize, mtderasesize;
+        char mtdname[16];
+        mtdname[0] = '\0';
+        mtdnum = -1;
+        r = sscanf(pmtdbufp, "mtd%d: %x %x %15s",
+                   &mtdnum, &mtdsize, &mtderasesize, mtdname);
+        if ((r == 4) && (mtdname[0] == '"')) {
+            char *x = strchr(mtdname + 1, '"');
+            if (x) {
+                *x = 0;
+            }
+            INFO("mtd partition %d, %s\n", mtdnum, mtdname + 1);
+            if (mtd_part_count < MAX_MTD_PARTITIONS) {
+                strcpy(mtd_part_map[mtd_part_count].name, mtdname + 1);
+                mtd_part_map[mtd_part_count].number = mtdnum;
+                mtd_part_count++;
+            } else {
+                ERROR("too many mtd partitions\n");
+            }
+        }
+        while (pmtdsize > 0 && *pmtdbufp != '\n') {
+            pmtdbufp++;
+            pmtdsize--;
+        }
+        if (pmtdsize > 0) {
+            pmtdbufp++;
+            pmtdsize--;
+        }
+    }
+    close(fd);
+}
+int mtd_name_to_number(const char *name)
+{
+    int n;
+    if (mtd_part_count < 0) {
+        mtd_part_count = 0;
+        find_mtd_partitions();
+    }
+    for (n = 0; n < mtd_part_count; n++) {
+        if (!strcmp(name, mtd_part_map[n].name)) {
+            return mtd_part_map[n].number;
+        }
+    }
+    return -1;
+}
+
 int bootenv_init(void) {
   struct stat st;
   struct mtd_info_user info;
@@ -489,7 +557,27 @@ int bootenv_init(void) {
   int i = 0;
   if (gs_init_done)
     return 0;
-  if (!stat("/dev/nand_env", &st)) {
+  int id = mtd_name_to_number("ubootenv");
+  if (id >= 0) {
+  sprintf(gs_partition_name, "/dev/mtd%d", id);
+  if ((fd = open (gs_partition_name, O_RDWR)) < 0) {
+    ERROR("open device(%s) error : %s \n",gs_partition_name, strerror(errno) );
+    return -2;
+  }
+
+  memset(&info, 0, sizeof(info));
+  err = ioctl(fd, MEMGETINFO, &info);
+  if (err < 0) {
+    ERROR("get MTD info error\n");
+    close(fd);
+    return -3;
+  }
+
+  gs_env_erase_size = info.erasesize;
+  gs_env_partition_size = info.size;
+  gs_env_data_size = gs_env_partition_size - sizeof(long);
+  close(fd);
+  } else if (!stat("/dev/nand_env", &st)) {
     sprintf(gs_partition_name, "/dev/nand_env");
     gs_env_partition_size = 0x10000;
 #if defined(MESON8_ENVSIZE) || defined(GXBABY_ENVSIZE) ||                      \
