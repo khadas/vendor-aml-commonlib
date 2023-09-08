@@ -204,6 +204,14 @@ void aml_log_set_from_string(const char *str);
 void aml_trace_set_from_string(const char *str);
 
 void aml_log_set_output_file(FILE *fp);
+/**
+ * @brief Rotate the log file to save space.
+ *
+ * @param current_file current log file path. Like /tmp/app.log
+ * @param rotate_file the file to be saved. Like /tmp/app.log.1
+ * @param rotate_bytes Rotate the current_file when its size > rotate_bytes, like 1024*1024
+ */
+void aml_log_set_rotate_policy(const char *current_file, const char *rotate_file, unsigned int rotate_bytes);
 
 /**
  * @brief write json format trace information to stream fp

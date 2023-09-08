@@ -353,6 +353,53 @@ static const char *log_level_name[] = {"ERR", "WARNING", "INFO", "DEBUG", "VERBO
 static FILE *log_fp = NULL;
 void aml_log_set_output_file(FILE *fp) { log_fp = fp; }
 pthread_t aml_log_pthread_id = 0;
+static const char *log_rotate_file = NULL;
+static const char *log_current_file = NULL;
+unsigned int log_rotate_bytes = 1024*1024;
+
+void aml_log_set_rotate_policy(const char *current_file, const char *rotate_file, unsigned int rotate_bytes)
+{
+  log_fp = fopen(current_file, "a+");
+  if (!log_fp) {
+    printf("open current log file fail, the reason is: \n");
+    perror("open log file fail reason");
+    return;
+  }
+  log_current_file = current_file;
+  log_rotate_file = rotate_file;
+  log_rotate_bytes = rotate_bytes;
+}
+
+/**
+ * @brief Try to rotate file.
+ *
+ * @param len new added length in bytes
+ */
+void aml_log_do_rotate(int len)
+{
+  static unsigned int total_len = 0;
+  total_len += len;
+  if (total_len >= log_rotate_bytes) {
+    if ((log_fp == NULL) || \
+      (log_rotate_file == NULL) || \
+      (log_current_file == NULL)
+    ) {
+      printf("log_fp:%p, log_rotate_file:%s,log_current_file:%s should not be null if you want to use rotate\n",
+        log_fp, log_rotate_file, log_current_file);
+      return;
+    }
+    // now current file is big enough
+    // try to rotate
+    char cmd[256] = {0};
+    snprintf(cmd,255, "cp -f %s %s", log_current_file, log_rotate_file);
+    system(cmd);
+    // empty current file
+    ftruncate(fileno(log_fp), 0);
+    fseek(log_fp, 0, SEEK_END);
+    total_len = 0;// reset this counter
+    sync();
+  }
+}
 
 void aml_log_msg(struct AmlLogCat *cat, int level, const char *file, const char *function,
                      int lineno, const char *fmt, ...) {
@@ -378,7 +425,10 @@ void aml_log_msg(struct AmlLogCat *cat, int level, const char *file, const char 
     va_start(ap, fmt);
     vsnprintf(&buf[len], sizeof(buf) - len, fmt, ap);
     va_end(ap);
-    fprintf(log_fp ?: stdout, "%s", buf);
+    len = fprintf(log_fp ?: stdout, "%s", buf);
+    if (log_fp) {
+      aml_log_do_rotate(len);
+    }
 }
 
 static FILE *trace_json_fp = NULL;
