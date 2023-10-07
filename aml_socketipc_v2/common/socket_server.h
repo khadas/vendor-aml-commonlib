@@ -37,6 +37,7 @@ typedef void (*PerformActionForClientMessage)(char* buf, int fd);
 
 typedef struct {
     int listen_fd;
+    char* serverName;
 
     List* clientFdList; // connected client fd
     List* serverMsgsList; // message need to send
@@ -52,6 +53,7 @@ typedef struct {
 
 typedef struct {
     int connectPort;
+    char* serverName;
 
     PerformActionForClientMessage serverHandler;
 } ServerInputData;
