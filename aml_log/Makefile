@@ -1,12 +1,13 @@
 CFLAGS += -Wall -g
 SRC = aml_log.c
 TARGET = libaml_log.so
+OUT_DIR ?= .
 
 all: $(TARGET)
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) $(LDFLAGS) -shared -fPIC \
-	-o $@ $^ $(LDLIBS)
+	$(patsubst %.o, $(OUT_DIR)/%.o, $<) -o $(OUT_DIR)/$@
 
 .PHONY: clean
 

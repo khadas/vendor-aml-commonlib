@@ -1,24 +1,25 @@
 LIB = libbootloader_message.a
 OBJS = bootloader_message.o bootloader_avb.o avb_crc32.o
+OUT_DIR ?= .
 .PHONY: all install clean
 
-#bootloader_message.o: bootloader_message.c
-#	$(CC) -c bootloader_message.c
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $(OUT_DIR)/$@
 
-all: urlmisc bootloader_message.o bootloader_slot
-	$(AR) rc $(LIB) $(OBJS)
+all: $(LIB)  urlmisc bootloader_slot
+
+$(LIB): $(OBJS)
+	$(AR) rc $(OUT_DIR)/$(LIB) $(patsubst %.o, $(OUT_DIR)/%.o, $(OBJS))
 
 urlmisc: urlmisc.o $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) -L$(OUT_DIR) -lbootloader_message $(patsubst %.o, $(OUT_DIR)/%.o, $^) -o $(OUT_DIR)/$@
 
 bootloader_slot : test.o $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
-
+	$(CC) $(CFLAGS) $(LDFLAGS) -L$(OUT_DIR) -lbootloader_message $(patsubst %.o, $(OUT_DIR)/%.o, $^) -o $(OUT_DIR)/$@
 
 clean:
-	rm -f *.o $(LIB)
+	rm -f $(OUT_DIR)/*.o $(OUT_DIR)/$(LIB)
 
 install:
-	install -m 755 $(LIB) $(STAGING_DIR)/usr/lib
-	install -m 755 urlmisc $(TARGET_DIR)/usr/bin
-
+	install -m 755 $(OUT_DIR)/$(LIB) $(STAGING_DIR)/usr/lib
+	install -m 755 $(OUT_DIR)/urlmisc $(TARGET_DIR)/usr/bin
