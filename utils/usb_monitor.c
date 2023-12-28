@@ -13,13 +13,15 @@
 #define ERROR_GET_CONTENT  -1
 #define ERROR_USB_CONFIG_ADB  -2
 #define SUCCESS            0
+#define MAX_CUSTOMIZED_PATH_LENGTH 64
+static char CUSTOMIZED_UDC_FILE_PATH[MAX_CUSTOMIZED_PATH_LENGTH];
 
 int UDC_config()
 {
     char UdcValue[128] = "ff400000.dwc2_a";
     char UdcValue_check[MIN_SIZE] = {0};
     FILE *fp = NULL;
-    fp = fopen(USB_CONFIG_ADB_UDC_VAL_FILE, "r");
+    fp = fopen(CUSTOMIZED_UDC_FILE_PATH, "r");
     if (fp != NULL)
     {
         fgets(UdcValue, 128, fp);
@@ -100,13 +102,55 @@ int usb_configure()
     return ret;
 }
 
-int main(void)
+void usage()
+{
+    printf("\tusb_monitor usage: \n");
+    printf("\t./usb_monitor $PATH\n");
+    printf("\t$PATH is OPTIONAL\n\tif no $PATH is specified, the default path /etc/adb_udc_file will be used\n");
+    return;
+}
+
+int parse_customized_udc_file_path(int argc, char *argv[])
+{
+    int ret = 0;
+    if (argc == 1) {
+        strncpy(CUSTOMIZED_UDC_FILE_PATH, USB_CONFIG_ADB_UDC_VAL_FILE, sizeof(CUSTOMIZED_UDC_FILE_PATH));
+        CUSTOMIZED_UDC_FILE_PATH[MAX_CUSTOMIZED_PATH_LENGTH - 1] = '\0';
+        printf("select UDC file path: %s\n", CUSTOMIZED_UDC_FILE_PATH);
+    } else if (argc == 2) {
+        if (strcmp(argv[1], "-h")) {
+            if (strlen(argv[1]) > (MAX_CUSTOMIZED_PATH_LENGTH -1)) {
+                ret = -1;
+                printf("udc file path length %d exceeds max file path length %d\n", strlen(argv[1]), MAX_CUSTOMIZED_PATH_LENGTH-1);
+            } else {
+                strncpy(CUSTOMIZED_UDC_FILE_PATH, argv[1], sizeof(CUSTOMIZED_UDC_FILE_PATH));
+                CUSTOMIZED_UDC_FILE_PATH[MAX_CUSTOMIZED_PATH_LENGTH - 1] = '\0';
+                printf("select UDC file path: %s\n", CUSTOMIZED_UDC_FILE_PATH);
+            }
+        } else {
+            ret = -1;
+            usage();
+        }
+    } else {
+        ret = -1;
+        usage();
+    }
+    return ret;
+}
+
+int main(int argc, char *argv[])
 {
     struct sockaddr_nl client;
     struct timeval tv;
     int Usbmonitor, rcvlen, ret;
     fd_set fds;
     int buffersize = 1024;
+
+    ret = parse_customized_udc_file_path(argc, argv);
+    if (ret) {
+        return -1;
+    }
+
     Usbmonitor = socket(AF_NETLINK, SOCK_RAW, NETLINK_KOBJECT_UEVENT);
     if (0 > Usbmonitor) {
       return -1;
@@ -123,6 +167,7 @@ int main(void)
     if (0 > ret) {
       return -1;
     }
+
     while (1) {
         char buf[UEVENT_BUFFER_SIZE] = { 0 };
         FD_ZERO(&fds);
