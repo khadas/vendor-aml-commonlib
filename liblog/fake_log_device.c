@@ -27,6 +27,11 @@
 #include <errno.h>
 #include <fcntl.h>
 
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+
 #ifdef HAVE_PTHREADS
 #include <pthread.h>
 #endif
@@ -80,6 +85,19 @@ typedef struct LogState {
         int     minPriority;
     } tagSet[kTagSetSize];
 } LogState;
+
+typedef struct FakeLogEnv {
+    int initFlag;
+    int maxFileSize;
+    int writeLen;
+    int stdoutFlag;
+    int outFd;
+    char keepFile;
+    char format[16];
+    char logPath[64];
+}FakeLogEnv;
+
+static FakeLogEnv  logEnv = {0, 1048576, 0, 0, -1, 0, "time", "/data"};
 
 
 #ifdef HAVE_PTHREADS
@@ -270,6 +288,7 @@ static void configureInitialState(const char* pathName, LogState* logState)
      * Taken from the long-dead utils/Log.cpp
      */
     const char* fstr = getenv("ANDROID_PRINTF_LOG");
+
     LogFormat format;
     if (fstr == NULL) {
         format = FORMAT_BRIEF;
@@ -285,14 +304,14 @@ static void configureInitialState(const char* pathName, LogState* logState)
         else if (strcmp(fstr, "raw") == 0)
             format = FORMAT_PROCESS;
         else if (strcmp(fstr, "time") == 0)
-            format = FORMAT_PROCESS;
+            format = FORMAT_TIME;
         else if (strcmp(fstr, "long") == 0)
             format = FORMAT_PROCESS;
         else
             format = (LogFormat) atoi(fstr);        // really?!
     }
 
-    logState->outputFormat = format;
+    logState->outputFormat = FORMAT_TIME;//format;
 }
 
 /*
@@ -337,6 +356,158 @@ static ssize_t fake_writev(int fd, const struct iovec *iov, int iovcnt) {
 #define writev fake_writev
 #endif
 
+static char *trim(char *str) {
+    char *p = str;
+
+    str = p;
+    int i = 0, j = 0;
+    int len;
+    len = strlen(str);
+
+
+    p = str + strlen(str) - 1;
+
+    while (j < len) {
+        if (str[j] != ' ' && str[j] != '\t' && str[j] != '\r' && str[j] != '\n') {
+            if (i != j)
+                str[i++] = str[j];
+            else
+                i++;
+        }
+        j++;
+    }
+
+    str[i] = '\0';
+    return str;
+}
+
+static char *getKeyValue(char *str, char *key) {
+    char *p;
+    char *tmp;
+
+    if (!str) return NULL;
+    str = trim(str);
+
+    if (str[0] == '#') return NULL;
+
+    p = strstr(str, key);
+    if (!p) {
+        return NULL;
+    }
+    p += strlen(key);
+    p +=1;
+
+    return p;
+}
+
+static void initLogcatEnv() {
+    FILE *fp;
+    char *buf = 0;
+    size_t  readLen = 0;
+    const char *deviceInfo = "/etc/logcat.conf";
+    char *p;
+    int stdoutini = 0;
+    int formatini = 0;
+    int pathini = 0;
+    int sizeini = 0;
+    int keepfileini = 0;
+/*
+STDOUT=false
+LOG_FORMAT=time
+LOG_PATH=/data/
+LOG_MAX_FILESIZE=1048576
+LOG_KEEP_FILE=false
+*/
+
+    fp = fopen(deviceInfo, "r");
+    if (fp == NULL) {
+        printf("error to open logcat conf file\n");
+        return;
+    }
+
+    while ((readLen = getline(&buf, &readLen, fp)) != -1) {
+        if (buf) {
+            if (!stdoutini) {
+                p = getKeyValue(buf, "STDOUT");
+                if (p) {
+                    logEnv.stdoutFlag = strncmp(p, "true", 4) ? 0 : 1;
+                    stdoutini = 1;
+                    continue;
+                }
+            }
+
+            if (!formatini) {
+                p = getKeyValue(buf, "LOG_FORMAT");
+                if (p) {
+                    strcpy(logEnv.format, p);
+                    formatini = 1;
+                    continue;
+                }
+            }
+
+            if (!pathini) {
+                p = getKeyValue(buf, "LOG_PATH");
+                if (p) {
+                    char dir[32];
+                    sprintf(dir, "%s/logcat/", p);
+                    struct stat sb;
+                    if (stat(dir, &sb) || !S_ISDIR(sb.st_mode)) {
+                        int status = mkdir(dir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+                        if (status) {
+                            printf("liblog: create path failed: %s\n", dir);
+                        }
+                    }
+
+                    pid_t pid = getpid();
+
+                    char filename[20];
+                    sprintf(filename, "/proc/%d/status", pid);
+
+                    FILE *file;
+                    file = fopen(filename, "r");
+
+                    if (file == NULL) {
+                        printf("liblog: open pid %d status failed\n", pid);
+                    }
+                    char line[32];
+                    memset(line, 0, 32);
+                    while (fgets(line, sizeof(line), file)) {
+                        if (strncmp(line, "Name:\t", 6) == 0) {
+                            line[strlen(line)-1] = '\0';
+                            break;
+                        }
+
+                    }
+                    sprintf(logEnv.logPath, "%slogcat_%s.txt", dir, &line[6]);
+                    pathini = 1;
+                    continue;
+                }
+            }
+
+            if (!sizeini) {
+                p = getKeyValue(buf, "LOG_MAX_FILESIZE");
+                if (p) {
+                    logEnv.maxFileSize = atoi(p);
+                    sizeini = 1;
+                    continue;
+                }
+            }
+            if (!keepfileini) {
+                p = getKeyValue(buf, "LOG_KEEP_FILE");
+                if (p) {
+                    logEnv.keepFile = strncmp(p, "true", 4) ? 0 : 1;
+                    keepfileini = 1;
+                    continue;
+                }
+            }
+        }
+
+    }
+    if (buf) {
+        free(buf);
+    }
+    fclose(fp);
+}
 
 /*
  * Write a filtered log message to stderr.
@@ -376,13 +547,15 @@ static void showLog(LogState *state,
 #else
     ptm = localtime(&when);
 #endif
-    //strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", ptm);
-    strftime(timeBuf, sizeof(timeBuf), "%m-%d %H:%M:%S", ptm);
+    strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", ptm);
+    //strftime(timeBuf, sizeof(timeBuf), "%m-%d %H:%M:%S", ptm);
 
     /*
      * Construct a buffer containing the log header and log message.
      */
     size_t prefixLen, suffixLen;
+    struct timeval curtime;
+    gettimeofday(&curtime, NULL);
 
     switch (state->outputFormat) {
     case FORMAT_TAG:
@@ -407,7 +580,7 @@ static void showLog(LogState *state,
         break;
     case FORMAT_TIME:
         prefixLen = snprintf(prefixBuf, sizeof(prefixBuf),
-            "%s %-8s\n\t", timeBuf, tag);
+            "%s.%03ld %-8s\t", timeBuf, curtime.tv_usec/1000, tag);
         strcpy(suffixBuf, "\n"); suffixLen = 1;
         break;
     case FORMAT_THREADTIME:
@@ -507,8 +680,21 @@ static void showLog(LogState *state,
      * somewhat by wrapping the writev call in the Mutex.
      */
 
+    if (!logEnv.initFlag) {
+        initLogcatEnv();
+        if (logEnv.stdoutFlag) {
+            logEnv.outFd = fileno(stderr);
+        } else {
+            if (!logEnv.keepFile)
+                logEnv.outFd = open(logEnv.logPath, O_CREAT|O_WRONLY|O_TRUNC, S_IRWXU);
+            else
+                logEnv.outFd = open(logEnv.logPath, O_CREAT|O_WRONLY, S_IRWXU);
+        }
+        logEnv.initFlag = 1;
+    }
+
     for (;;) {
-        int cc = writev(fileno(stderr), vec, v-vec);
+        int cc = writev(logEnv.outFd, vec, v-vec);
 
         if (cc == totalLen)
 			break;
@@ -521,6 +707,13 @@ static void showLog(LogState *state,
                 /* shouldn't happen when writing to file or tty */
             fprintf(stderr, "+++ LOG: write partial (%d of %d)\n", cc, totalLen);
             break;
+        }
+    }
+
+    if (!logEnv.stdoutFlag) {
+        logEnv.writeLen += totalLen;
+        if (logEnv.writeLen > logEnv.maxFileSize) {
+            lseek(logEnv.outFd, 0, SEEK_SET);
         }
     }
 

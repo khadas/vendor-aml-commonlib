@@ -10,8 +10,10 @@ TARGET=liblog.so
 SONAME_TARGET=liblog.so.${SO_VERSION}
 REAL_TARGET=liblog.so.${SO_REALNAME}
 
-
 $(info "OUT_DIR : $(OUT_DIR)")
+ifeq ($(USE_FAKE_DEVICE),y)
+CFLAGS += -DFAKE_LOG_DEVICE
+endif
 
 # rules
 all: $(TARGET) ${SONAME_TARGET} ${REAL_TARGET}
@@ -31,7 +33,7 @@ $(OUT_DIR)/%.o: %.c
 .PHONY: clean
 
 clean:
-	rm -f $(OBJC) $(OUT_DIR)/$(TARGET)
+	rm -f $(OBJC) $(TARGET) ${SONAME_TARGET} ${REAL_TARGET} $(OUT_DIR)/$(TARGET)
 
 install:
 	install -m 755 $(OUT_DIR)/$(TARGET) $(STAGING_DIR)/usr/lib
