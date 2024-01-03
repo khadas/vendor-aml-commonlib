@@ -735,7 +735,7 @@ int clear_recovery() {
 int get_active_slot_from_cmdline(int *slot) {
 
     char *p = NULL;
-    char buffer[1024]={0};
+    char buffer[2048]={0};
     char slot_str[8] = {0};
 
     int fd = open("/proc/cmdline", O_RDONLY);
