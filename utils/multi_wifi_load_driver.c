@@ -491,6 +491,21 @@ static const dongle_info dongle_registerd[] = {
 		""
 	},
 	{
+		"0800",
+		"w2l_comm",
+		"w2l_comm.ko",
+		AMLOGIC_KO_PATH,
+		.wifi_module_arg = {
+			.arg_type = MODULE_ARG_OTHER,
+			.arg = "bus_type=sdio",
+		},
+		"w265s2m",
+		0xffff,
+		"w2l",
+		"w2l.ko",
+		""
+	},
+	{
 		"7603",
 		"wlan_mt7663_sdio",
 		"wlan_mt7663_sdio.ko",
