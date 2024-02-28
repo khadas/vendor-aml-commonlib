@@ -1,0 +1,11 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include/aml-property
+
+Name: aml-property-client
+Description: aml-property-client
+Requires:
+Version: 1.0.0
+Libs: -L${libdir} -laml-property
+Cflags: -I${includedir}

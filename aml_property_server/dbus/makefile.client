@@ -1,0 +1,44 @@
+BASEDIR=$(shell basename $(CURDIR))
+
+SRCS := property-client.cpp
+
+OBJS := $(addprefix $(OBJDIR)/$(BASEDIR)/,$(notdir $(SRCS:.cpp=.o)))
+
+CPPFLAGS += -I$(OBJDIR)/$(BASEDIR)
+
+TARGET_NAME := libaml-property.so
+TARGET := $(BUILDDIR)/$(TARGET_NAME).$(LIB_VER)
+TARGET_LINK := $(BUILDDIR)/$(TARGET_NAME)
+
+LDFLAGS += -Wl,-soname,$(TARGET_NAME).$(LIB_VER) -shared
+LDFLAGS += -lamldbus
+
+PROPERTY_COMMON_SRCS := $(wildcard ../common/*.cpp)
+PROPERTY_COMMON_OBJS := $(addprefix $(OBJDIR)/common/,$(notdir $(PROPERTY_COMMON_SRCS:.cpp=.o)))
+
+$(TARGET): $(OBJS) $(PROPERTY_COMMON_OBJS)
+	@echo " [LINK] $@"
+	@$(CXX) -o $@ $^ $(LDFLAGS) $(LD_LIBS)
+	@ln -frs $(BUILDDIR)/$(TARGET_NAME).$(LIB_VER) \
+		       $(BUILDDIR)/$(TARGET_NAME)
+
+install: $(TARGET)
+	@echo " [INSTALL] $(TARGET_NAME)..."
+	@install -d $(DESTDIR)/usr/include/aml-property/
+	@install -m 0644 $(CURDIR)/../include/property.h  $(DESTDIR)/usr/include/aml-property/
+	@install -m 0644 $(CURDIR)/../include/property-extended.h  $(DESTDIR)/usr/include/aml-property/
+	@install -d $(DESTDIR)/usr/lib
+	@install -m 0644 $(TARGET) $(DESTDIR)/usr/lib/
+	@install -m 0644 $(CURDIR)/aml-property.pc $(DESTDIR)/usr/lib/
+	@ln -frs $(DESTDIR)/usr/lib/$(TARGET_NAME).$(LIB_VER) \
+		       $(DESTDIR)/usr/lib/$(TARGET_NAME)
+
+clean:
+	@echo " [CLEAN] $(BASEDIR)..."
+	@rm -rf $(OBJDIR)/$(BASEDIR) $(TARGET)
+
+all: $(TARGET)
+
+.PHONY: clean install
+
+include ../makefile.inc

@@ -1,0 +1,39 @@
+BASEDIR=$(shell basename $(CURDIR))
+
+SRCS := property-server.cpp
+OBJS := $(addprefix $(OBJDIR)/$(BASEDIR)/,$(notdir $(SRCS:.cpp=.o)))
+
+PROPERTY_COMMON_SRCS := $(wildcard ../common/*.cpp)
+PROPERTY_COMMON_OBJS := $(addprefix $(OBJDIR)/common/,$(notdir $(PROPERTY_COMMON_SRCS:.cpp=.o)))
+
+PROPERTY_DB_SRCS := $(wildcard ../property-db/*.cpp)
+PROPERTY_DB_OBJS := $(addprefix $(OBJDIR)/property-db/,$(notdir $(PROPERTY_DB_SRCS:.cpp=.o)))
+
+TARGET := $(BUILDDIR)/propertyserver
+
+CPPFLAGS += -I$(OBJDIR)/$(BASEDIR)
+
+LD_LIBS := -lleveldb -lamldbus -lsystemd
+
+$(TARGET): $(OBJS) $(PROPERTY_DB_OBJS) $(PROPERTY_COMMON_OBJS)
+	@echo " [LINK] $@"
+	@$(CXX) -o $@ $^ $(LDFLAGS) $(LD_LIBS)
+
+install: $(TARGET)
+	@echo " [INSTALL] $(TARGET)..."
+	@install -d $(DESTDIR)/usr/bin
+	@install -m 755 $(TARGET) $(DESTDIR)/usr/bin
+	@install -d $(DESTDIR)/etc/dbus-1/system.d/
+	@install -m 644 $(CURDIR)/amlogic.yocto.property.conf $(DESTDIR)/etc/dbus-1/system.d/
+	@install -d $(DESTDIR)/lib/systemd/system
+	@install -m 0644 ${CURDIR}/propertyserver.service $(DESTDIR)/lib/systemd/system/
+
+clean:
+	@echo " [CLEAN] $(BASEDIR)..."
+	@rm -rf $(OBJDIR)/$(BASEDIR) $(TARGET)
+
+all: $(TARGET)
+
+.PHONY: clean install
+
+include ../makefile.inc
