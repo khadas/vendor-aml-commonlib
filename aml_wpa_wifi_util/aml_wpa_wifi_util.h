@@ -134,13 +134,14 @@ int wpa_wifi_send_enable_cmd(int network_id);
 /*
     Only wpa-psk is supported for now, any legal encryption is supported
 */
-int wpa_wifi_send_connect_cmd(const char* ssid, const char* passward);
+int wpa_wifi_send_connect_cmd(const char* ssid, const char* password);
 int wpa_wifi_send_disconnect_cmd();
 int wpa_wifi_send_reconnect_cmd();
 
 int wpa_wifi_get_current_wifi_status(WPA_WIFI_STATUS_TYPE* status);
 int wpa_wifi_get_current_scan_status(WPA_WIFI_SCAN_STATE* status);
 int wpa_wifi_get_scan_results(WPA_WIFI_AP_INFO wifi_array_to_fill[], const int array_size, int* ap_count, int is_sort_by_strength);
+int wpa_wifi_get_current_connected_ssid_and_password(char* ssid, char* password);
 
 int wpa_wifi_init(const char* wpa_supl_ctrl, wpa_wifi_connect_callback connect_callback, int enable_network_id, int save_when_connected);
 int wpa_wifi_uninit();

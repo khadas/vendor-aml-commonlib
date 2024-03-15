@@ -337,7 +337,7 @@ int wpa_wifi_send_reconnect_cmd() {
     return ret;
 }
 
-int wpa_wifi_send_connect_cmd(const char* ssid, const char* passward) {
+int wpa_wifi_send_connect_cmd(const char* ssid, const char* password) {
     char result[64];
     pthread_mutex_lock(&g_wpa_manager.sup_lock);
     g_wpa_manager.cur_wifi_status = WPA_WIFI_INVALID;
@@ -348,7 +348,7 @@ int wpa_wifi_send_connect_cmd(const char* ssid, const char* passward) {
     send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d ssid \"%s\"", g_wpa_manager.cur_enable_network_id, ssid);
     send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d key_mgmt WPA-PSK", g_wpa_manager.cur_enable_network_id);
     // set psk
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d psk \"%s\"", g_wpa_manager.cur_enable_network_id, passward);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d psk \"%s\"", g_wpa_manager.cur_enable_network_id, password);
 
     send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d pairwise CCMP TKIP", g_wpa_manager.cur_enable_network_id);
     send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d group CCMP TKIP", g_wpa_manager.cur_enable_network_id);
@@ -570,6 +570,79 @@ int wpa_wifi_get_scan_results(WPA_WIFI_AP_INFO wifi_array_to_fill[], const int a
 
     AML_LOGI("The actual ssid scanned was %d, and %d were obtained after de-weighting and de-nulling\n", found_ap_count, real_count);
     return RETURN_OK;
+}
+
+int wpa_wifi_get_current_connected_ssid_and_password(char* ssid, char* password) {
+    if (ssid == NULL || password == NULL) {
+        AML_LOGE("Error: NULL pointer of ssid or password passed.\n");
+        return RETURN_ERR;
+    }
+    char result[512];
+    int ret;
+    int result_len = sizeof(result)-1;
+
+    // Get current ssid
+    if (g_wpa_manager.cur_wifi_status != WPA_WIFI_SUCCESS) {
+        AML_LOGW("Current wifi is unconnected \n");
+        return RETURN_ERR;
+    }
+    pthread_mutex_lock(&g_wpa_manager.sup_lock);
+    ret = send_wpa_cli_command(result, result_len, "STATUS");
+    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    if (ret) {
+        AML_LOGE("send wpa cmd STATUS fail\n");
+        return ret;
+    }
+    char* cur_line = strtok(result, "\n");
+    while (cur_line != NULL) {
+        if (strncmp(cur_line, "ssid=", 5) == 0) {
+            char* ssid_start = cur_line + 5;
+            char* ssid_end = strchr(ssid_start, '\0');
+            if (ssid_end) {
+                *ssid_end = '\0'; // Null-terminate the SSID string
+                strncpy(ssid, ssid_start, ssid_end - ssid_start + 1);
+                break;
+            } else {
+                AML_LOGE("SSID not found in STATUS command result.\n");
+                return RETURN_ERR;
+            }
+        }
+        cur_line = strtok(NULL, "\n");
+    }
+
+    if (cur_line == NULL) {
+        AML_LOGE("SSID not found in STATUS command result.\n");
+        return RETURN_ERR;
+    }
+
+    // Read the wpa_supplicant.conf file to find the PSK for the current SSID
+    FILE* conf = fopen(WPA_SUPPLICANT_CONF_PATH, "r");
+    if (!conf) {
+        AML_LOGE("Failed to open wpa_supplicant.conf.\n");
+        return RETURN_ERR;
+    }
+
+    char line[256];
+    int ssid_found = 0;
+    while (fgets(line, sizeof(line), conf) != NULL) {
+        if (strstr(line, ssid) && strstr(line, "ssid=\"")) {
+            ssid_found = 1;
+        } else if (ssid_found && strstr(line, "psk=\"")) {
+            char* psk_start = strstr(line, "psk=\"") + 5;
+            char* psk_end = strchr(psk_start, '\"');
+            if (psk_end) {
+                *psk_end = '\0';
+                strncpy(password, psk_start, psk_end - psk_start + 1);
+                fclose(conf);
+                return RETURN_OK;
+            }
+        }
+    }
+
+    fclose(conf);
+    AML_LOGE("PSK not found for SSID %s.\n", ssid);
+    return RETURN_ERR;
+
 }
 
 /*

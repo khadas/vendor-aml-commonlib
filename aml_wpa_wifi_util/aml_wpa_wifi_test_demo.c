@@ -36,7 +36,7 @@
 #include "aml_wpa_wifi_util.h"
 
 #define INVALID_INPUT -99
-#define MAX_TEST_CASE 7
+#define MAX_TEST_CASE 8
 #define INPUT_NUMBER(var, ...) get_input_string(type_int,    var, __VA_ARGS__)
 #define INPUT_STRING(var, ...) get_input_string(type_string, var, __VA_ARGS__)
 #define INPUT_CHAR(var, ...)   get_input_string(type_char,   var, __VA_ARGS__)
@@ -128,6 +128,7 @@ void help()
     printf(" [ 5 ]    Get current wifi connection status\n");
     printf(" [ 6 ]    Get current wifi scan status      \n");
     printf(" [ 7 ]    Get current wifi connection info  \n");
+    printf(" [ 8 ]    Get current connected ssid&pw     \n");
     printf(" [ h ]    Show this list                    \n");
     printf(" [ q ]    Quit                              \n");
     printf("***********************************************************************\n");
@@ -208,6 +209,15 @@ int main() {
             break;
         case 7:
             wpa_wifi_send_status_cmd();
+            break;
+        case 8:
+            ret = wpa_wifi_get_current_connected_ssid_and_password(ssid, password);
+            if (ret == RETURN_OK) {
+                printf("current connected Wi-Fi SSID: %s\n", ssid);
+                printf("current connected Wi-Fi Password: %s\n", password);
+            } else {
+                printf("failed to get current Wi-Fi SSID and password.\n");
+            }
             break;
         default:
             printf("Option [%d] not supported \n",select);

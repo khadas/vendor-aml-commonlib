@@ -20,7 +20,7 @@ $(TARGET): $(SRC)
 	-o $@ $^ $(LDLIBS)
 
 ifeq ($(BUILD_BIN_TARGET),1)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(BIN_TARGET) aml_wpa_wifi_test_demo.c -L. -laml_wpa_wifi_util $(LDLIBS) -w
+	$(CC) $(CFLAGS) -o $(BIN_TARGET) aml_wpa_wifi_test_demo.c -L. -laml_wpa_wifi_util $(LDLIBS) -w
 endif
 
 clean:
