@@ -13,7 +13,6 @@
 AMBUS_DECLARE_INTERFACE(TEST_INTF);
 AMBUS_DEFINE_INTERFACE(TEST_INTF, TEST_SERVICE, TEST_OBJECT, TEST_INTERFACE);
 
-#define AMBUS_SERV_OBJ_INTF(_intf) AMBUS_SERVICE(_intf), AMBUS_OBJECT(_intf), AMBUS_INTERFACE(_intf)
 #define AMBUS_SERV_OBJ_INTF_MEM(_intf, _mem) AMBUS_SERV_OBJ_INTF(_intf), #_mem
 
 // we use two bus, one for method, one for signal

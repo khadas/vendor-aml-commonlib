@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 
@@ -119,6 +120,7 @@
 #define AMBUS_SERVICE(_intf) AMBUS_INTERFACE_PTR(_intf)->service
 #define AMBUS_OBJECT(_intf) AMBUS_INTERFACE_PTR(_intf)->object
 #define AMBUS_INTERFACE(_intf) AMBUS_INTERFACE_PTR(_intf)->interface
+#define AMBUS_SERV_OBJ_INTF(_intf) AMBUS_SERVICE(_intf), AMBUS_OBJECT(_intf), AMBUS_INTERFACE(_intf)
 
 #define AMBUS_MEMBER_IDX(_intf, _member) _intf##_enum_##_member
 #define AMBUS_ADD_VTABLE(_ambus, _intf, _userData)                                                                     \
@@ -165,22 +167,159 @@
       M(M, GEN_VTABLE_PROP, GEN_VTABLE_PROPRW, GEN_VTABLE_METHOD, GEN_VTABLE_SIGNAL) SD_BUS_VTABLE_END};
 
 
-#define AMBUS_DATA_TYPE_uint8_t "y", uint8_t, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_bool "b", int, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_int16_t "n", int16_t, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_uint16_t "q", uint16_t, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_int32_t "i", int32_t,ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_uint32_t "u", uint32_t,ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_int64_t "x", int64_t, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_uint64_t "t", uint64_t, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_double "d", double, ambus_data_pack_basic, ambus_data_unpack_basic
-#define AMBUS_DATA_TYPE_string "s", char *,ambus_data_pack_basic, ambus_data_unpack_string
+#define AMBUS_DATA_TYPE_uint8_t "y", uint8_t
+#define AMBUS_DATA_TYPE_bool "b", int
+#define AMBUS_DATA_TYPE__Bool AMBUS_DATA_TYPE_bool
+#define AMBUS_DATA_TYPE_int16_t "n", int16_t
+#define AMBUS_DATA_TYPE_uint16_t "q", uint16_t
+#define AMBUS_DATA_TYPE_int32_t "i", int32_t
+#define AMBUS_DATA_TYPE_uint32_t "u", uint32_t
+#define AMBUS_DATA_TYPE_int64_t "x", int64_t
+#define AMBUS_DATA_TYPE_uint64_t "t", uint64_t
+#define AMBUS_DATA_TYPE_double "d", double
+#define AMBUS_DATA_TYPE_string "s", char *
+// for a new type ttt, we need to provide macro AMBUS_DATA_TYPE_ttt and ambus_data_type_info_ttt
 
 #define AMBUS_DATA_TYPE_SIG(x) MACRO_GET1ST(MACRO_CAT2(AMBUS_DATA_TYPE_,x))
-#define AMBUS_DATA_TYPE_CT(x) MACRO_GET2ND(MACRO_CAT2(AMBUS_DATA_TYPE_,x))
-#define AMBUS_DATA_TYPE_PACK(x) MACRO_GET3RD(MACRO_CAT2(AMBUS_DATA_TYPE_,x))
-#define AMBUS_DATA_TYPE_UNPACK(x) MACRO_GET4TH(MACRO_CAT2(AMBUS_DATA_TYPE_,x))
+#define AMBUS_DATA_TYPE_CT(x) MACRO_GET2ND(MACRO_CAT2(AMBUS_DATA_TYPE_, x), struct x *)
 
+#define AMBUS_DATA_TYPE_INFO(x) MACRO_CAT2(ambus_data_type_info_, x)
+#define AMBUS_DATA_TYPE_INFO_PTR(x) (struct ambus_data_type_info *)&AMBUS_DATA_TYPE_INFO(x)
+
+#define AMBUS_DATA_TYPE_IS_OUT_OUT(x) _, x
+#define AMBUS_DATA_TYPE_IS_OUT(x, t, f) MACRO_GET3RD(MACRO_CAT2(AMBUS_DATA_TYPE_IS_OUT_, x), t, f)
+#define AMBUS_DATA_TYPE_STRIP(x) MACRO_GET2ND(MACRO_CAT2(AMBUS_DATA_TYPE_IS_OUT_, x), x)
+
+#define GEN_API_DECLARE_1(P, x, y) , AMBUS_DATA_TYPE_CT(AMBUS_DATA_TYPE_STRIP(x)) AMBUS_DATA_TYPE_IS_OUT(x, *y, y)
+#define GEN_API_DECLARE(P, f, ...) int f(MACRO_REMOVE_1ST(MACRO_MAP_PAIR(GEN_API_DECLARE_1, P, ##__VA_ARGS__)))
+
+#define GEN_API_METHOD_IMPL_1(P, x, y) AMBUS_DATA_TYPE_CT(AMBUS_DATA_TYPE_STRIP(x)) y = 0;
+#define GEN_API_METHOD_IMPL_2(P, x, y)                                                                                 \
+  {AMBUS_DATA_TYPE_INFO_PTR(AMBUS_DATA_TYPE_STRIP(x)), &y, AMBUS_DATA_TYPE_IS_OUT(x, 0, 1)},
+#define GEN_API_METHOD_IMPL_3(P, x, y) , AMBUS_DATA_TYPE_IS_OUT(x, &y, y)
+// genrate dbus method handle f stub to C function impl
+#define GEN_API_METHOD_IMPL_NAME(P, f, impl, ...)                                                                      \
+  static int f(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {                                           \
+    MACRO_MAP_PAIR(GEN_API_METHOD_IMPL_1, P, ##__VA_ARGS__)                                                            \
+    struct ambus_data_pack_info dpinfo[] = {MACRO_MAP_PAIR(GEN_API_METHOD_IMPL_2, P, ##__VA_ARGS__){NULL, NULL, 0}};   \
+    int call(void) { return impl(MACRO_REMOVE_1ST(MACRO_MAP_PAIR(GEN_API_METHOD_IMPL_3, P, ##__VA_ARGS__))); };        \
+    return ambus_dispatch_to_implement(m, dpinfo, call);                                                               \
+  }
+#define GEN_API_METHOD_IMPL(P, f, ...) GEN_API_METHOD_IMPL_NAME(P, MACRO_CAT2(P, _method_##f), f, ##__VA_ARGS__)
+
+#define GEN_API_METHOD_PROXY_2(P, x, y)                                                                                \
+  {AMBUS_DATA_TYPE_INFO_PTR(AMBUS_DATA_TYPE_STRIP(x)), AMBUS_DATA_TYPE_IS_OUT(x, y, &y),                               \
+   AMBUS_DATA_TYPE_IS_OUT(x, 1, 0)},
+#define GEN_API_METHOD_PROXY_1(P, x, y) , AMBUS_DATA_TYPE_CT(AMBUS_DATA_TYPE_STRIP(x)) AMBUS_DATA_TYPE_IS_OUT(x, *y, y)
+// generate function f, proxy to dbus method m
+#define GEN_API_METHOD_PROXY_NAME(P, f, m, ...)                                                                        \
+  int f(MACRO_REMOVE_1ST(MACRO_MAP_PAIR(GEN_API_METHOD_PROXY_1, P, ##__VA_ARGS__))) {                                  \
+    struct ambus_data_pack_info dpinfo[] = {MACRO_MAP_PAIR(GEN_API_METHOD_PROXY_2, P, ##__VA_ARGS__){NULL, NULL, 0}};  \
+    return ambus_call_sync_with_packer(P(), #m, dpinfo);                                                               \
+  };
+#define GEN_API_METHOD_PROXY(P, f, ...) GEN_API_METHOD_PROXY_NAME(P, f, f, ##__VA_ARGS__)
+
+#define GEN_VTABLE_EX_5(P, x, y) AMBUS_DATA_TYPE_IS_OUT(x, AMBUS_DATA_TYPE_SIG(AMBUS_DATA_TYPE_STRIP(x)), "")
+#define GEN_VTABLE_EX_4(P, x, y) AMBUS_DATA_TYPE_IS_OUT(x, "", AMBUS_DATA_TYPE_SIG(AMBUS_DATA_TYPE_STRIP(x)))
+#define GEN_VTABLE_EX_3(P, f, ...)                                                                                     \
+  {#f, MACRO_MAP_PAIR(GEN_VTABLE_EX_4, P, ##__VA_ARGS__), MACRO_MAP_PAIR(GEN_VTABLE_EX_5, P, ##__VA_ARGS__)},
+#define GEN_VTABLE_EX_2(P,x,y) AMBUS_DATA_TYPE_SIG(AMBUS_DATA_TYPE_STRIP(x))
+#define GEN_VTABLE_EX_1(P,f,...) {#f, MACRO_MAP_PAIR(GEN_VTABLE_EX_2, P, ##__VA_ARGS__), NULL},
+#define AMBUS_DEFINE_INTERFACE_EX(M, service, object, interface)                                                       \
+  struct ambus_interface M##_interface = {                                                                             \
+      service,                                                                                                         \
+      object,                                                                                                          \
+      interface,                                                                                                       \
+      {M(M, GEN_VTABLE_EX_1, GEN_VTABLE_EX_1, GEN_VTABLE_EX_3, GEN_VTABLE_EX_1){0, 0, 0}}};
+
+#define GEN_VTABLE_PROP_EX(P, f, x, y) SD_BUS_PROPERTY(#f, AMBUS_DATA_TYPE_SIG(x), P##_property_get, 0, 0),
+#define GEN_VTABLE_PROPRW_EX(P, f, x, y)                                                                               \
+  SD_BUS_WRITABLE_PROPERTY(#f, AMBUS_DATA_TYPE_SIG(x), P##_property_get, P##_property_set, 0, 0),
+#define GEN_VTABLE_METHOD_EX_1(P, x, y) AMBUS_DATA_TYPE_IS_OUT(x, "" , SD_BUS_PARAM(y))
+#define GEN_VTABLE_METHOD_EX_2(P, x, y) AMBUS_DATA_TYPE_IS_OUT(x, SD_BUS_PARAM(y), "")
+#define GEN_VTABLE_METHOD_EX(P, f, ...)                                                                                \
+  SD_BUS_METHOD_WITH_NAMES(                                                                                            \
+      #f, MACRO_MAP_PAIR(GEN_VTABLE_EX_4, P, ##__VA_ARGS__), MACRO_MAP_PAIR(GEN_VTABLE_METHOD_EX_1, P, ##__VA_ARGS__), \
+      MACRO_MAP_PAIR(GEN_VTABLE_EX_5, P, ##__VA_ARGS__), MACRO_MAP_PAIR(GEN_VTABLE_METHOD_EX_2, P, ##__VA_ARGS__),     \
+      P##_method_##f, SD_BUS_VTABLE_UNPRIVILEGED),
+#define GEN_VTABLE_SIGNAL_EX(P, f, ...)                                                                                \
+  SD_BUS_SIGNAL_WITH_NAMES(#f, MACRO_MAP_PAIR(GEN_VTABLE_EX_4, P, ##__VA_ARGS__),                                      \
+                           MACRO_MAP_PAIR(GEN_VTABLE_METHOD_EX_1, P, ##__VA_ARGS__), 0),
+#define AMBUS_DEFINE_VTABLE_ADDITIONAL(M, ADDITIONAL)                                                                  \
+  M(M, GEN_EMPTY, GEN_EMPTY, GEN_API_METHOD_IMPL, GEN_EMPTY);                                                          \
+  static const sd_bus_vtable M##_vtable[] = {SD_BUS_VTABLE_START(0),                                                   \
+                                             M(M, GEN_VTABLE_PROP_EX, GEN_VTABLE_PROPRW_EX, GEN_VTABLE_METHOD_EX,      \
+                                               GEN_VTABLE_SIGNAL_EX) ADDITIONAL() SD_BUS_VTABLE_END};
+#define AMBUS_DEFINE_VTABLE_EX(M) AMBUS_DEFINE_VTABLE_ADDITIONAL(M, MACRO_EMPTY)
+
+#define AMBUS_DEFINE_PROXY_EX(M,P) M(P, GEN_EMPTY, GEN_EMPTY, GEN_API_METHOD_PROXY, GEN_EMPTY)
+
+#define AMBUS_DECLARE_DATA_TYPE(x, ...) extern struct ambus_data_type_info AMBUS_DATA_TYPE_INFO(x);
+#define AMBUS_DEFINE_DATA_TYPE(x, ...)                                                                                 \
+  struct ambus_data_type_info AMBUS_DATA_TYPE_INFO(x) = {AMBUS_DATA_TYPE_SIG(x), __VA_ARGS__};
+
+#define AMBUS_DATA_TYPE_DECLARE_ARRAY(t, x)                                                                            \
+  extern struct ambus_data_type_info_array AMBUS_DATA_TYPE_INFO(t);                                                    \
+  struct t {                                                                                                           \
+    int num;                                                                                                           \
+    AMBUS_DATA_TYPE_CT(x) val[];                                                                                       \
+  };
+
+#define AMBUS_DATA_TYPE_DEFINE_ARRAY(t, x)                                                                             \
+  struct ambus_data_type_info_array AMBUS_DATA_TYPE_INFO(t) = {                                                        \
+      {AMBUS_DATA_TYPE_SIG(t), ambus_data_pack_array, ambus_data_unpack_array, ambus_data_free_array},                 \
+      AMBUS_DATA_TYPE_INFO_PTR(x),                                                                                     \
+      sizeof(AMBUS_DATA_TYPE_CT(x)),                                                                                   \
+      offsetof(struct t, val),                                                                                         \
+      offsetof(                                                                                                        \
+          struct {                                                                                                     \
+            void *next;                                                                                                \
+            AMBUS_DATA_TYPE_CT(x) val[];                                                                               \
+          },                                                                                                           \
+          val)};
+
+#define AMBUS_ARRAY_NEW(t, n)                                                                                          \
+  ({                                                                                                                   \
+    struct t *v = malloc(offsetof(struct t, val) + sizeof(v->val[0]) * n);                                             \
+    v->num = n;                                                                                                        \
+    v;                                                                                                                 \
+  })
+
+#define AMBUS_DATA_FREE(t, v) (AMBUS_DATA_TYPE_INFO_PTR(t))->free(AMBUS_DATA_TYPE_INFO_PTR(t), v)
+
+#define GEN_STRUCT_DECLARE_1(P, x, y) AMBUS_DATA_TYPE_CT(x) y;
+#define AMBUS_DATA_TYPE_DECLARE_STRUCT(t, ...)                                                                         \
+  extern struct ambus_data_type_info_struct AMBUS_DATA_TYPE_INFO(t);                                                   \
+  struct t {                                                                                                           \
+    MACRO_MAP_PAIR(GEN_STRUCT_DECLARE_1, P, ##__VA_ARGS__)                                                             \
+  };
+
+#define GEN_STRUCT_DEFINE_1(P, x, y) {AMBUS_DATA_TYPE_INFO_PTR(x), offsetof(P, y)},
+#define GEN_STRUCT_DEFINE_2(P, x, y) AMBUS_DATA_TYPE_SIG(x)
+#define AMBUS_DATA_TYPE_DEFINE_STRUCT(t, ...)                                                                          \
+  struct ambus_data_type_info_struct AMBUS_DATA_TYPE_INFO(t) = {                                                       \
+      {AMBUS_DATA_TYPE_SIG(t), ambus_data_pack_struct, ambus_data_unpack_struct, ambus_data_free_struct},              \
+      MACRO_MAP_PAIR(GEN_STRUCT_DEFINE_2, P, ##__VA_ARGS__),                                                           \
+      sizeof(struct t),                                                                                                \
+      {MACRO_MAP_PAIR(GEN_STRUCT_DEFINE_1, struct t, ##__VA_ARGS__) NULL}};
+
+#define AMBUS_DATA_TYPE_DECLARE_MAP(t, KEY, key, VAL, val)                                                             \
+  extern struct ambus_data_type_info_map AMBUS_DATA_TYPE_INFO(t);                                                      \
+  struct t {                                                                                                           \
+    struct t *next;                                                                                                    \
+    AMBUS_DATA_TYPE_CT(KEY) key;                                                                                       \
+    AMBUS_DATA_TYPE_CT(VAL) val;                                                                                       \
+  };
+
+#define AMBUS_DATA_TYPE_DEFINE_MAP(t, KEY, key, VAL, val)                                                              \
+  struct ambus_data_type_info_map AMBUS_DATA_TYPE_INFO(t) = {                                                          \
+      {AMBUS_DATA_TYPE_SIG(t), ambus_data_pack_map, ambus_data_unpack_map, ambus_data_free_map},                       \
+      AMBUS_DATA_TYPE_INFO_PTR(KEY),                                                                                   \
+      AMBUS_DATA_TYPE_INFO_PTR(VAL),                                                                                   \
+      AMBUS_DATA_TYPE_SIG(KEY) AMBUS_DATA_TYPE_SIG(VAL),                                                               \
+      sizeof(struct t),                                                                                                \
+      offsetof(struct t, key),                                                                                         \
+      offsetof(struct t, val)}
 
 #ifdef __cplusplus
 extern "C" {
@@ -200,6 +339,58 @@ struct ambus_interface {
   const char *interface;
   struct ambus_vtable vtable[];
 };
+
+struct ambus_data_type_info {
+  const char *signature;
+  int (*pack)(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+  int (*unpack)(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+  void (*free)(struct ambus_data_type_info *t, void *val);
+};
+
+struct ambus_data_pack_info {
+  struct ambus_data_type_info *type;
+  void *val;
+  int output;
+};
+
+struct ambus_data_type_info_array {
+  struct ambus_data_type_info ainfo;
+  struct ambus_data_type_info *dinfo;
+  int size;
+  int offset;
+  int ptr_offset;
+};
+
+struct ambus_data_type_info_map {
+  struct ambus_data_type_info ainfo;
+  struct ambus_data_type_info *kinfo;
+  struct ambus_data_type_info *vinfo;
+  char *contents;
+  int size;
+  int koff;
+  int voff;
+};
+
+struct ambus_data_type_info_struct {
+  struct ambus_data_type_info ainfo;
+  char *contents;
+  int size;
+  struct {
+    struct ambus_data_type_info *finfo;
+    int offset;
+  } fields_info[];
+};
+
+AMBUS_DECLARE_DATA_TYPE(uint8_t);
+AMBUS_DECLARE_DATA_TYPE(bool);
+AMBUS_DECLARE_DATA_TYPE(uint16_t);
+AMBUS_DECLARE_DATA_TYPE(int16_t);
+AMBUS_DECLARE_DATA_TYPE(int32_t);
+AMBUS_DECLARE_DATA_TYPE(uint32_t);
+AMBUS_DECLARE_DATA_TYPE(int64_t);
+AMBUS_DECLARE_DATA_TYPE(uint64_t);
+AMBUS_DECLARE_DATA_TYPE(double);
+AMBUS_DECLARE_DATA_TYPE(string);
 
 static const char *AMBUS_DEFAULT_SYSTEM = (const char *)(0);
 static const char *AMBUS_DEFAULT_USER = (const char *)(1);
@@ -264,6 +455,25 @@ int ambus_call_async_general(struct aml_dbus *ambus, const char *destination, co
 int ambus_call_sync_general(struct aml_dbus *ambus, const char *destination, const char *path, const char *interface,
                             const char *member, void *userdata, int (*msgpack)(sd_bus_message *m, void *userdata),
                             int (*msgunpack)(sd_bus_message *m, void *userdata));
+
+int ambus_data_pack_basic(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_unpack_basic(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_unpack_string(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_pack_array(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_unpack_array(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+void ambus_data_free_array(struct ambus_data_type_info *t, void *val);
+void ambus_data_free_struct(struct ambus_data_type_info *t, void *val);
+int ambus_data_unpack_struct(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_pack_struct(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_pack_map(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+int ambus_data_unpack_map(struct ambus_data_type_info *t, sd_bus_message *m, void *val);
+void ambus_data_free_map(struct ambus_data_type_info *t, void *val);
+int ambus_pack_all(sd_bus_message *m, struct ambus_data_pack_info *pi);
+int ambus_unpack_all(sd_bus_message *m, struct ambus_data_pack_info *pi);
+void ambus_free_all(struct ambus_data_pack_info *pi);
+int ambus_dispatch_to_implement(sd_bus_message *m, struct ambus_data_pack_info *pi, int (*call)(void));
+int ambus_call_sync_with_packer(struct aml_dbus *ambus, const char *destination, const char *path,
+                                const char *interface, const char *member, struct ambus_data_pack_info *pi);
 
 #ifdef __cplusplus
 } /* extern "C" */
@@ -337,7 +547,8 @@ template <> struct ambus_data_type<uint32_t> : ambus_simple_type<uint32_t, 'u'> 
 template <> struct ambus_data_type<int64_t> : ambus_simple_type<int64_t, 'x'> {};
 template <> struct ambus_data_type<uint64_t> : ambus_simple_type<uint64_t, 't'> {};
 template <> struct ambus_data_type<double> : ambus_simple_type<double, 'd'> {};
-template <> struct ambus_data_type<long> : ambus_simple_type<long, 'x', int64_t> {};
+template <typename T>
+struct ambus_data_type<T, typename std::enable_if<std::is_same<T, long>::value>::type> : ambus_simple_type<T, 'x'> {};
 //template <> struct ambus_data_type<const char *> : ambus_simple_type<const char *, 's'> {};
 template <typename T>
 struct ambus_data_type<T, typename std::enable_if<std::is_floating_point<T>::value>::type>
@@ -545,7 +756,7 @@ struct ambus_method_call<RET (CLS::*)(Args...)> : public ambus_method_call<> {
       r = val.pack(true, reply);
     if (r >= 0)
       r = sd_bus_send(sd_bus_message_get_bus(m), reply, NULL);
-    else if (reply)
+    if (reply)
       sd_bus_message_unref(reply);
     return r;
   }
@@ -576,7 +787,7 @@ template <typename RET, typename... Args> struct ambus_method_call<RET (*)(Args.
       r = val.pack(true, reply);
     if (r >= 0)
       r = sd_bus_send(sd_bus_message_get_bus(m), reply, NULL);
-    else if (reply)
+    if (reply)
       sd_bus_message_unref(reply);
     return r;
   }

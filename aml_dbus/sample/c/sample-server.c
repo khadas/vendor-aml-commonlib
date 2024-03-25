@@ -14,8 +14,6 @@ AMBUS_DECLARE_INTERFACE(TEST_INTF);
 //AMBUS_DEFINE_INTERFACE(TEST_INTF, TEST_SERVICE, TEST_OBJECT, TEST_INTERFACE);
 AMBUS_DEFINE_INTERFACE(TEST_INTF, NULL, NULL, NULL);
 
-#define AMBUS_SERV_OBJ_INTF(_intf) AMBUS_SERVICE(_intf), AMBUS_OBJECT(_intf), AMBUS_INTERFACE(_intf)
-
 struct TestObject {
   int count;
 };
@@ -72,7 +70,9 @@ static int TEST_INTF_method_TestArray(sd_bus_message *m, void *userdata, sd_bus_
   }
   sd_bus_message_exit_container(m);
   sd_bus_message_close_container(reply);
-  return sd_bus_send(sd_bus_message_get_bus(m), reply, NULL);
+  r = sd_bus_send(sd_bus_message_get_bus(m), reply, NULL);
+  sd_bus_message_unref(reply);
+  return r;
 }
 
 AMBUS_DEFINE_VTABLE(TEST_INTF);

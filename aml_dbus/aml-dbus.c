@@ -221,91 +221,6 @@ void ambus_set_flag(struct aml_dbus *ambus, uint32_t *val, uint32_t mask) {
   pthread_mutex_unlock(&ambus->lock);
 }
 
-int ambus_call_async(struct aml_dbus *ambus, sd_bus_message *m, sd_bus_message_handler_t callback, void *userdata) {
-  int r = -1;
-  RUN_IN_DISPATCH_THREAD(ambus, r = sd_bus_call_async(ambus->bus, NULL, m, callback, userdata, 0));
-  return r;
-}
-
-sd_bus_message *ambus_call_sync(struct aml_dbus *ambus, sd_bus_message *m) {
-  int r = -1;
-  sd_bus_message *ret = NULL;
-  if (ambus_in_dispatch_thread(ambus)) {
-    AMBUS_LOGW("cannot make sync call in dispatch thread");
-    return NULL;
-  } else {
-    int done = 0;
-    int method_done(sd_bus_message * dm, void *userdata, sd_bus_error *ret_error) {
-      ret = sd_bus_message_ref(dm);
-      AMBUS_LOGD("call done, notify caller");
-      ambus_set_flag(ambus, &done, 1);
-      return 0;
-    }
-    POST_AND_WAIT_DISPATCH(ambus, r = sd_bus_call_async(ambus->bus, NULL, m, method_done, NULL, 0));
-    if (r >= 0)
-      ambus_wait_flag(ambus, &done, 1);
-  }
-  return ret;
-}
-
-int ambus_call_simple_async_va(struct aml_dbus *ambus, struct ambus_interface *intf, int idx,
-                               sd_bus_message_handler_t callback, void *userdata, va_list ap) {
-  int r = -1;
-  int done = 0;
-  void do_task(void *p) {
-    sd_bus_message *msg = NULL;
-    r = sd_bus_message_new_method_call(ambus->bus, &msg, intf->service, intf->object, intf->interface,
-                                       intf->vtable[idx].member);
-    if (r >= 0 && intf->vtable[idx].signature)
-      r = sd_bus_message_appendv(msg, intf->vtable[idx].signature, ap);
-    if (r >= 0)
-      r = sd_bus_call_async(ambus->bus, NULL, msg, callback, userdata, 0);
-    ambus_set_flag(ambus, &done, 1);
-  }
-  if (ambus_in_dispatch_thread(ambus))
-    do_task(NULL);
-  else if (ambus_post_task(ambus, do_task, NULL) == 0)
-    ambus_wait_flag(ambus, &done, 1);
-  return r;
-}
-
-int ambus_call_simple_async(struct aml_dbus *ambus, struct ambus_interface *intf, int idx,
-                            sd_bus_message_handler_t callback, void *userdata, ...) {
-  va_list ap;
-  va_start(ap, userdata);
-  int r = ambus_call_simple_async_va(ambus, intf, idx, callback, userdata, ap);
-  va_end(ap);
-  return r;
-}
-
-int ambus_call_simple_sync_va(struct aml_dbus *ambus, struct ambus_interface *intf, int idx, va_list ap) {
-  if (ambus_in_dispatch_thread(ambus)) {
-    AMBUS_LOGE("cannot make sync call in dispatch thread");
-    return -1;
-  }
-  int r;
-  int done = 0;
-  int msg_handle(sd_bus_message * m, void *userdata, sd_bus_error *ret_error) {
-    if (intf->vtable[idx].result)
-      r = sd_bus_message_readv(m, intf->vtable[idx].result, ap);
-    ambus_set_flag(ambus, &done, 1);
-    return 0;
-  }
-  r = ambus_call_simple_async_va(ambus, intf, idx, msg_handle, NULL, ap);
-  va_end(ap);
-  if (r >= 0)
-    ambus_wait_flag(ambus, &done, 1);
-  return r;
-}
-
-int ambus_call_simple_sync(struct aml_dbus *ambus, struct ambus_interface *intf, int idx, ...) {
-  va_list ap;
-  va_start(ap, idx);
-  int r = ambus_call_simple_sync_va(ambus, intf, idx, ap);
-  va_end(ap);
-  return r;
-}
-
 int ambus_call_sync_general(struct aml_dbus *ambus, const char *destination, const char *path, const char *interface,
                             const char *member, void *userdata, int (*msgpack)(sd_bus_message *m, void *userdata),
                             int (*msgunpack)(sd_bus_message *m, void *userdata)) {
@@ -328,10 +243,10 @@ int ambus_call_sync_general(struct aml_dbus *ambus, const char *destination, con
       r = msgpack(msg, userdata);
     if (r >= 0)
       r = sd_bus_call_async(ambus->bus, NULL, msg, call_done, userdata, 0);
-    else {
-      sd_bus_message_unref(msg);
+    else
       ambus_set_flag(ambus, &done, 1);
-    }
+    if (msg)
+      sd_bus_message_unref(msg);
   }
   if (ambus_post_task(ambus, do_task, NULL) == 0)
     ambus_wait_flag(ambus, &done, 1);
@@ -350,9 +265,8 @@ int ambus_call_async_general(struct aml_dbus *ambus, const char *destination, co
       r = msgpack(msg, userdata);
     if (r >= 0)
       r = sd_bus_call_async(ambus->bus, NULL, msg, reply_msg_handle, userdata, 0);
-    else {
+    if (msg)
       sd_bus_message_unref(msg);
-    }
     if (p)
       ambus_set_flag(ambus, (uint32_t *)p, 1);
   }
@@ -365,7 +279,6 @@ int ambus_call_async_general(struct aml_dbus *ambus, const char *destination, co
   }
   return r;
 }
-
 
 int ambus_run_in_dispatch(struct aml_dbus *ambus, void (*cb)(void *), void *param) {
   if (ambus_in_dispatch_thread(ambus)) {
@@ -381,3 +294,253 @@ int ambus_run_in_dispatch(struct aml_dbus *ambus, void (*cb)(void *), void *para
   }
   return 0;
 }
+
+int ambus_dispatch_to_implement(sd_bus_message *m, struct ambus_data_pack_info *pi, int (*call)(void)) {
+  int ret = ambus_unpack_all(m, pi);
+  if (ret >= 0)
+    ret = call();
+  if (ret >= 0) {
+    sd_bus_message *reply = NULL;
+    ret = sd_bus_message_new_method_return(m, &reply);
+    if (ret >= 0) {
+      ret = ambus_pack_all(reply, pi);
+      if (ret >= 0)
+        ret = sd_bus_send(NULL, reply, NULL);
+    }
+    if (reply)
+      sd_bus_message_unref(reply);
+  }
+  ambus_free_all(pi);
+  return ret;
+}
+
+int ambus_call_sync_with_packer(struct aml_dbus *ambus, const char *destination, const char *path,
+                                const char *interface, const char *member, struct ambus_data_pack_info *pi) {
+  if (ambus_in_dispatch_thread(ambus)) {
+    AMBUS_LOGE("cannot make sync call in dispatch thread");
+    return -1;
+  }
+  int r = -1;
+  int done = 0;
+  int call_done(sd_bus_message * m, void *userdata, sd_bus_error *ret_error) {
+    if (sd_bus_message_is_method_error(m, NULL)) {
+      r = -sd_bus_message_get_errno(m);
+      AMBUS_LOGW("call %s.%s fail %d %s\n", interface, member, r, sd_bus_message_get_error(m)->message);
+    }
+    if (r >= 0)
+      r = ambus_unpack_all(m, pi);
+    ambus_set_flag(ambus, &done, 1);
+    return 0;
+  }
+  void do_task(void *p) {
+    sd_bus_message *msg = NULL;
+    r = sd_bus_message_new_method_call(ambus->bus, &msg, destination, path, interface, member);
+    if (r >= 0)
+      r = ambus_pack_all(msg, pi);
+    if (r >= 0)
+      r = sd_bus_call_async(ambus->bus, NULL, msg, call_done, NULL, 0);
+    else
+      ambus_set_flag(ambus, &done, 1);
+    if (msg)
+      sd_bus_message_unref(msg);
+  }
+  if (ambus_post_task(ambus, do_task, NULL) == 0)
+    ambus_wait_flag(ambus, &done, 1);
+  return r;
+}
+
+int ambus_data_pack_basic(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  return sd_bus_message_append_basic(m, t->signature[0], val);
+}
+
+int ambus_data_unpack_basic(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  return sd_bus_message_read_basic(m, t->signature[0], val);
+}
+
+int ambus_data_pack_string(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  return sd_bus_message_append_basic(m, t->signature[0], *(const char **)val);
+}
+
+int ambus_data_unpack_string(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  const char *s = NULL;
+  int r = sd_bus_message_read_basic(m, t->signature[0], &s);
+  if (r >= 0 && s)
+    *(const char **)val = strdup(s);
+  return r;
+}
+
+void ambus_data_free_string(struct ambus_data_type_info *t, void *val) { free(*(void **)val); }
+
+AMBUS_DEFINE_DATA_TYPE(uint8_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(bool, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(int16_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(uint16_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(int32_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(uint32_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(int64_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(uint64_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(double, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
+AMBUS_DEFINE_DATA_TYPE(string, ambus_data_pack_string, ambus_data_unpack_string, ambus_data_free_string);
+
+int ambus_pack_all(sd_bus_message *m, struct ambus_data_pack_info *pi) {
+  int r = 0;
+  for (; r >= 0 && pi->type; pi++) {
+    if (pi->output == 0)
+      r = pi->type->pack(pi->type, m, pi->val);
+  }
+  return r;
+}
+
+int ambus_unpack_all(sd_bus_message *m, struct ambus_data_pack_info *pi) {
+  int r = 0;
+  for (; r >= 0 && pi->type; pi++) {
+    if (pi->output == 1)
+      r = pi->type->unpack(pi->type, m, pi->val);
+  }
+  return r;
+}
+
+void ambus_free_all(struct ambus_data_pack_info *pi) {
+  for (; pi->type; pi++) {
+    if (pi->type->free)
+      pi->type->free(pi->type, pi->val);
+  }
+}
+
+struct ambus_data_list_node {
+  struct ambus_data_list_node *next;
+};
+
+int ambus_data_pack_array(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_array *ta = (struct ambus_data_type_info_array *)t;
+  struct ambus_data_type_info *pi = ta->dinfo;
+  void *data = *(void **)val;
+  void *ptr = data + ta->offset;
+  int r = sd_bus_message_open_container(m, t->signature[0], t->signature + 1);
+  for (int i = *(int *)data; r >= 0 && i--;) {
+    r = pi->pack(pi, m, ptr);
+    ptr += ta->size;
+  }
+  sd_bus_message_close_container(m);
+  return r;
+}
+
+int ambus_data_unpack_array(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_array *ta = (struct ambus_data_type_info_array *)t;
+  struct ambus_data_type_info *pi = ta->dinfo;
+  int r = sd_bus_message_enter_container(m, t->signature[0], t->signature + 1);
+  struct ambus_data_list_node *head = alloca(ta->ptr_offset + ta->size), *node = head;
+  int num;
+  for (num = 0; (r = pi->unpack(pi, m, (void *)node + ta->ptr_offset)) > 0; num++) {
+    node->next = alloca(ta->ptr_offset + ta->size);
+    node = node->next;
+  }
+  sd_bus_message_exit_container(m);
+  if (r >= 0) {
+    void *data = *(void **)val = malloc(ta->offset + ta->size * num);
+    *(int *)data = num;
+    void *ptr = data + ta->offset;
+    for (; num--; head = head->next, ptr += ta->size) {
+      memcpy(ptr, (void *)head + ta->ptr_offset, ta->size);
+    }
+  }
+  return r;
+}
+
+void ambus_data_free_array(struct ambus_data_type_info *t, void *val) {
+  struct ambus_data_type_info_array *ta = (struct ambus_data_type_info_array *)t;
+  struct ambus_data_type_info *pi = ta->dinfo;
+  void *data = *(void **)val;
+  if (data == NULL)
+    return;
+  void *ptr = data + ta->offset;
+  if (pi->free) {
+    for (int i = *(int *)data; i--;) {
+      pi->free(pi, ptr);
+      ptr += ta->size;
+    }
+  }
+  free(data);
+}
+
+int ambus_data_pack_struct(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_struct *ts = (struct ambus_data_type_info_struct *)t;
+  int r = sd_bus_message_open_container(m, 'r', ts->contents);
+  void *ptr = *(void **)val;
+  for (typeof(ts->fields_info[0]) *f = ts->fields_info; r >= 0 && f->finfo; f++) {
+    r = f->finfo->pack(f->finfo, m, ptr + f->offset);
+  }
+  sd_bus_message_close_container(m);
+  return r;
+}
+
+int ambus_data_unpack_struct(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_struct *ts = (struct ambus_data_type_info_struct *)t;
+  int r = sd_bus_message_enter_container(m, 'r', ts->contents);
+  void *ptr = *(void **)val = malloc(ts->size);
+  for (typeof(ts->fields_info[0]) *f = ts->fields_info; r >= 0 && f->finfo; f++) {
+    r = f->finfo->unpack(f->finfo, m, ptr + f->offset);
+  }
+  sd_bus_message_exit_container(m);
+  return r;
+}
+
+void ambus_data_free_struct(struct ambus_data_type_info *t, void *val) {
+  struct ambus_data_type_info_struct *ts = (struct ambus_data_type_info_struct *)t;
+  void *ptr = *(void **)val;
+  if (ptr == NULL)
+    return;
+  for (typeof(ts->fields_info[0]) *f = ts->fields_info; f->finfo; f++) {
+    if (f->finfo->free)
+      f->finfo->free(f->finfo, ptr + f->offset);
+  }
+  free(ptr);
+}
+
+int ambus_data_pack_map(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_map *ts = (struct ambus_data_type_info_map *)t;
+  struct ambus_data_list_node *ptr = *(struct ambus_data_list_node **)val;
+  int r;
+  AMBUS_CHECK(r, sd_bus_message_open_container(m, 'a', t->signature + 1), return r);
+  for (; r >= 0 && ptr; ptr = ptr->next) {
+    AMBUS_CHECK(r, sd_bus_message_open_container(m, 'e', ts->contents), break);
+    AMBUS_CHECK(r, ts->kinfo->pack(ts->kinfo, m, (void *)ptr + ts->koff), break);
+    AMBUS_CHECK(r, ts->vinfo->pack(ts->vinfo, m, (void *)ptr + ts->voff), break);
+    sd_bus_message_close_container(m);
+  }
+  sd_bus_message_close_container(m);
+  return r;
+}
+
+int ambus_data_unpack_map(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  struct ambus_data_type_info_map *ts = (struct ambus_data_type_info_map *)t;
+  struct ambus_data_list_node **tail = (struct ambus_data_list_node **)val;
+  int r = sd_bus_message_enter_container(m, 'a', t->signature + 1);
+  while (r > 0 && (r = sd_bus_message_enter_container(m, 'e', ts->contents)) > 0) {
+    struct ambus_data_list_node *cur = malloc(ts->size);
+    if ((r = ts->kinfo->unpack(ts->kinfo, m, (void *)cur + ts->koff)) > 0 &&
+        (r = ts->vinfo->unpack(ts->vinfo, m, (void *)cur + ts->voff)) > 0) {
+      *tail = cur;
+      tail = &cur->next;
+    } else {
+      free(cur);
+    }
+    sd_bus_message_exit_container(m);
+  }
+  *tail = NULL;
+  return r;
+}
+
+void ambus_data_free_map(struct ambus_data_type_info *t, void *val) {
+  struct ambus_data_type_info_map *ts = (struct ambus_data_type_info_map *)t;
+  for (struct ambus_data_list_node *ptr = *(struct ambus_data_list_node **)val; ptr;) {
+    struct ambus_data_list_node *next = ptr->next;
+    if (ts->kinfo->free)
+      ts->kinfo->free(ts->kinfo, (void *)ptr + ts->koff);
+    if (ts->vinfo->free)
+      ts->vinfo->free(ts->vinfo, (void *)ptr + ts->voff);
+    free(ptr);
+    ptr = next;
+  }
+}
+
