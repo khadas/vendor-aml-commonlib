@@ -92,6 +92,7 @@ ServerMsgHandler msgCbks[MAXServerMsg];
 
 // 1.callback function
 void handleServerMsgAction(char* buf);
+void clientConnectedHandler(void);
 
 // 2.business action functions for sending to server
 void sendClientMsgType1(int msgTypeValue);
@@ -122,6 +123,13 @@ void handleServerMsgAction(char* buf) {
     } else if (msg->type == SERVERMSGTYPE3) {
         msgCbks[msg->type](msg);
     }
+}
+void clientConnectedHandler() {
+    printf("client connect succeeded \n");
+}
+
+void clientDisconnectedHandler() {
+    printf("client disconnect \n");
 }
 
 void serverMsgType1ActHandle(ServerMsgT* msg)
@@ -184,10 +192,13 @@ void initializeClientInputData(ClientInputData* clientInputData, char* connectIp
 
     clientInputData->connectIp = connectIp;
     clientInputData->connectPort = connectPort;
+    clientInputData->clientName = "testClient";
 
     clientInputData->registerBitmap = bitmap;
 
     clientInputData->clientHandler = handleServerMsgAction;
+    clientInputData->clientConnectedHandler = clientConnectedHandler;
+    clientInputData->clientDisconnectedHandler = clientDisconnectedHandler;
 }
 
 int main(int argc, char *argv[])

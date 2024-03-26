@@ -32,7 +32,7 @@ extern "C" {
 // 1、Public interface for socket communication
 #define LOCALHOST_IP "127.0.0.1"
 #define DEFAULT_IP "127.0.0.1"
-#define DEFAULT_PORT 6800
+#define DEFAULT_PORT 6811
 
 // Basic socket operations
 // Read "n" bytes from a descriptor
@@ -45,10 +45,6 @@ ssize_t writen(int fd, const void* vptr, ssize_t n);
 // for server
 void setNonblocking(int fd);
 int createListener(int* listen_fd, int serverPort);
-
-// for client
-void initConnection(int* sockfd, const char *serverIP, int serverPort); //init socket；return sockfd
-
 
 typedef enum {
     UNDEFINED,

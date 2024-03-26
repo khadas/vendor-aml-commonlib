@@ -134,7 +134,7 @@ fail:
 }
 
 // for client
-void initConnection(int* sockfd, const char *serverIP, int serverPort)
+void clientInitConnection(int* sockfd, const char *serverIP, int serverPort)
 {
     struct sockaddr_in serv_addr;
 
@@ -152,7 +152,7 @@ void initConnection(int* sockfd, const char *serverIP, int serverPort)
     }
 
     int ret;
-    int seconds = 0;
+    int reconnectionCount = 0;
 
     while (true) {
         ret = connect(*sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
@@ -170,15 +170,13 @@ void initConnection(int* sockfd, const char *serverIP, int serverPort)
             }
             break;
         default:
-            AML_LOGW("try to connect to server, elapsed time: %d seconds, ret=%d, errno=%d \n", seconds + 1, ret, errno);
-        }
-
-        if (seconds > 1 && ((seconds + 1) % 120 == 0)) {
-            AML_LOGE("Error: Socket reconnection timed out.\n");
-            exit(EXIT_FAILURE);
+            if (reconnectionCount > 1 && ((reconnectionCount + 1) % 10 == 0)) {
+                reconnectionCount = 0;
+                AML_LOGW("try to connect to server, ret=%d, errno=%d \n", ret, errno);
+            }
         }
         sleep(1);
-        seconds++;
+        reconnectionCount++;
     }
 
     AML_LOGI("connect to server\n");

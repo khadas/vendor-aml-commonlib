@@ -34,35 +34,45 @@ extern "C" {
 // Business general execution functions for messages from the server
 typedef void (*PerformActionForServerMessage)(char*);
 
-// Release of requested data
-typedef void (*FreeSpecificMessage)(void*);
+// Client connect or disconnect handler
+typedef void (*ClientConnectedHandleFunc)(void);
 
 typedef struct {
     int sockfd;
     int beats;
     char* connectIp;
+    char* clientName;
     int connectPort;
     int registerBitmap; //register the required bitmap
+    int isConnected;
 
     pthread_mutex_t beatMutex;
     pthread_mutex_t writeMsgMutex;
+    pthread_mutex_t connectionStatusMutex;
+    pthread_mutex_t reconnectionMutex;
     pthread_t dispatch;
     pthread_t heartBeatDetect;
 
     PerformActionForServerMessage clientHandler;
+    ClientConnectedHandleFunc clientConnectedHandler;
+    ClientConnectedHandleFunc clientDisconnectedHandler;
 } ClientSocketData;
 
 typedef struct {
     int connectPort;
     char* connectIp;
+    char* clientName;
     int registerBitmap;
 
     PerformActionForServerMessage clientHandler;
+    ClientConnectedHandleFunc clientConnectedHandler;
+    ClientConnectedHandleFunc clientDisconnectedHandler;
 } ClientInputData;
 
 void ClientInit(ClientInputData* clientInputData);
 void ClientExit(void);
 int ClientWriteMsg2Server(MessageType msgType, void* msg, const int msgLength);
+void ClientGetConnectionStatus(int* connectStatus);
 
 #ifdef __cplusplus
 }

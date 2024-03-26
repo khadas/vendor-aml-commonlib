@@ -43,8 +43,12 @@ ServerSocketData serverSocketData;
 
 void EnqueueServerMsg(void* msg, MessageType msgType, int msglength, int serverMsgType)
 {
+    if (NULL == serverSocketData.clientFdList->head) {
+        AML_LOGW("server %s: no connected client......\n", serverSocketData.serverName);
+        return;
+    }
     if (UNDEFINED == msgType) {
-        AML_LOGW("Invalid message type......\n");
+        AML_LOGW("server %s: invalid message type......\n", serverSocketData.serverName);
         return;
     }
     MsgHeader header;
@@ -100,9 +104,9 @@ void* messageSenderWorker(void *arg)
                     int fd = *(int*)it->data;
                     // If the fd device registers for this event send msg
                     if ((it->nodeTypeData & (1 << serverMsgType)) != 0) {
-                        AML_LOGD("send business message to fd %d......\n", fd);
-                        if (write(fd, pMsg, dataLenth) != dataLenth)
-                            AML_LOGW("server write to client failed......\n");
+                        AML_LOGD("server %s: send business message to fd %d......\n", serverSocketData.serverName, fd);
+                        if (writen(fd, pMsg, dataLenth) != dataLenth)
+                            AML_LOGW("server %s: write to client failed......\n", serverSocketData.serverName);
                     }
                     it = it->next;
                 }
@@ -113,8 +117,8 @@ void* messageSenderWorker(void *arg)
                 while (it != NULL)
                 {
                     int fd = *(int*)it->data;
-                    if (write(fd, pMsg, dataLenth) != dataLenth)
-                        AML_LOGW("server write to client failed......\n");
+                    if (writen(fd, pMsg, dataLenth) != dataLenth)
+                        AML_LOGW("server %s: write to client failed......\n", serverSocketData.serverName);
                     it = it->next;
                 }
             }
@@ -131,7 +135,8 @@ void* messageSenderWorker(void *arg)
 void* heartBeatSenderWorker(void *arg)
 {
     while (1) {
-        EnqueueServerMsg(NULL, HEARTBEAT, 0, -1);
+        if (NULL != serverSocketData.clientFdList->head)
+            EnqueueServerMsg(NULL, HEARTBEAT, 0, -1);
         sleep(10);
     }
 }
@@ -139,13 +144,13 @@ void* heartBeatSenderWorker(void *arg)
 /*
     handle the registration message from the client
 */
-void handleRegisterMessage(char* bitmapStr, int fd) {
+static void handleRegisterMessage(char* bitmapStr, int fd) {
 
     int bitmapLen = sizeof(int) * 8;
 
     int bitmap = atoi(bitmapStr);
 
-    AML_LOGD("receive client register message from fd %d, bitmap: %d\n", fd, bitmap);
+    AML_LOGD("server %s: receive client register message from fd %d, bitmap: %d\n", serverSocketData.serverName, fd, bitmap);
 
     // int ptr need malloc, remember to free
     int* connfd_ptr = malloc(sizeof(int));
@@ -153,7 +158,7 @@ void handleRegisterMessage(char* bitmapStr, int fd) {
     push_back(serverSocketData.clientFdList, connfd_ptr, bitmap);
     for (int j = 0; j < bitmapLen; j++) {
         if ((bitmap & (1 << j )) != 0) {
-            AML_LOGD("server receive register %d , fd: %d \n", j, fd);
+            AML_LOGD("server %s: receive register %d , fd: %d \n", serverSocketData.serverName, j, fd);
         }
     }
 }
@@ -161,7 +166,7 @@ void handleRegisterMessage(char* bitmapStr, int fd) {
 /*
     listening to different events from client and handling them
 */
-void* epollEventHandlerWorker(void *arg)
+static void* epollEventHandlerWorker(void *arg)
 {
     int epollfd = epoll_create1(0);
     if (epollfd == -1) {
@@ -255,7 +260,7 @@ void* epollEventHandlerWorker(void *arg)
     close(epollfd);
 }
 
-void initServerData(ServerSocketData* serverSocketData, ServerInputData* serverInputData)
+static void initServerData(ServerSocketData* serverSocketData, ServerInputData* serverInputData)
 {
     if (!serverSocketData || !serverInputData) {
         AML_LOGE("Null pointer passed to initServerData......\n");
@@ -263,9 +268,12 @@ void initServerData(ServerSocketData* serverSocketData, ServerInputData* serverI
     }
 
     serverSocketData->serverHandler = serverInputData->serverHandler;
+    serverSocketData->serverName = serverInputData->serverName;
 
     serverSocketData->clientFdList = createList();
     serverSocketData->serverMsgsList= createList();
+    pthread_mutex_init(&serverSocketData->serverMsgsMutex, NULL);
+    pthread_cond_init(&serverSocketData->serverMsgsCond, NULL);
     createListener(&serverSocketData->listen_fd, serverInputData->connectPort);
 }
 
@@ -276,27 +284,33 @@ void ServerInit(ServerInputData* serverInputData)
 
     int ret = pthread_create(&serverSocketData.epollEventHandler, NULL, epollEventHandlerWorker, NULL);
     if (ret != 0) {
-        AML_LOGE("epollEventHandlerWorker pthread create failed......\n");
+        AML_LOGE("server %s: epollEventHandlerWorker pthread create failed......\n", serverSocketData.serverName);
         exit(-1);
     }
     ret = pthread_create(&serverSocketData.messageSender, NULL, messageSenderWorker, NULL);
     if (ret != 0) {
-        AML_LOGE("messageSenderWorker pthread create failed......\n");
+        AML_LOGE("server %s: messageSenderWorker pthread create failed......\n", serverSocketData.serverName);
         exit(-1);
     }
     ret = pthread_create(&serverSocketData.heartBeatSender, NULL, heartBeatSenderWorker, NULL);
     if (ret != 0) {
-        AML_LOGE("heartBeatSenderWorker pthread create failed......\n");
+        AML_LOGE("server %s: heartBeatSenderWorker pthread create failed......\n", serverSocketData.serverName);
         exit(-1);
     }
 }
 
 void ServerExit(void)
 {
+    pthread_cancel(serverSocketData.epollEventHandler);
     pthread_join(serverSocketData.epollEventHandler, NULL);
-    pthread_join(serverSocketData.messageSender, NULL);
+    pthread_cancel(serverSocketData.heartBeatSender);
     pthread_join(serverSocketData.heartBeatSender, NULL);
+    pthread_cancel(serverSocketData.messageSender);
+    pthread_join(serverSocketData.messageSender, NULL);
     // free and close
+    pthread_mutex_destroy(&serverSocketData.serverMsgsMutex);
+    pthread_cond_destroy(&serverSocketData.serverMsgsCond);
+
     freeList(serverSocketData.clientFdList);
     freeList(serverSocketData.serverMsgsList);
     close(serverSocketData.listen_fd);

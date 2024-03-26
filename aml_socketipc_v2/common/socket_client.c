@@ -40,9 +40,220 @@
 
 ClientSocketData clientSocketData;
 
+static void clientInitConnection()
+{
+    struct sockaddr_in serv_addr;
+
+    clientSocketData.sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSocketData.sockfd < 0) {
+        AML_LOGE("client %s: create socket failed\n", clientSocketData.clientName);
+        exit(-1);
+    }
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(clientSocketData.connectPort);
+    if (inet_pton(AF_INET, clientSocketData.connectIp, &serv_addr.sin_addr) != 1) {
+        AML_LOGE("client %s: invalid address\n", clientSocketData.clientName);
+        exit(-1);
+    }
+
+    int ret;
+    int reconnectionCount = 0;
+
+    while (true) {
+        ret = connect(clientSocketData.sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+        if (ret == 0) {
+            break;
+        }
+        switch (errno) {
+        case EISCONN:
+            AML_LOGW("client %s: Socket is already connected. Closing and retrying.\n", clientSocketData.clientName);
+            close(clientSocketData.sockfd);
+            clientSocketData.sockfd = socket(AF_INET, SOCK_STREAM, 0);  // creat new socket
+            if (clientSocketData.sockfd == -1) {
+                AML_LOGE("Error creating socket");
+                exit(EXIT_FAILURE);
+            }
+            break;
+        default:
+            if (reconnectionCount > 1 && ((reconnectionCount + 1) % 10 == 0)) {
+                reconnectionCount = 0;
+                AML_LOGW("client %s: try to connect to server, ret=%d, errno=%d \n", clientSocketData.clientName, ret, errno);
+            }
+        }
+        sleep(1);
+        reconnectionCount++;
+    }
+
+    AML_LOGI("client %s: connect to server\n", clientSocketData.clientName);
+}
+
+static void clientRegister2Server(void)
+{
+    AML_LOGI("client %s: in register2Server......\n", clientSocketData.clientName);
+    int msgLength = sizeof(clientSocketData.registerBitmap);
+    char msg[10];
+    sprintf(msg, "%d", clientSocketData.registerBitmap);
+    int len = ClientWriteMsg2Server(REGISTER, msg, msgLength);
+    if (len == msgLength + sizeof(MsgHeader)) {
+        AML_LOGI("client %s: register server message succeed......\n", clientSocketData.clientName);
+    } else {
+        AML_LOGE("client %s: register server message failed......\n", clientSocketData.clientName);
+        exit(-1);
+    }
+}
+
+static void handleClientConnection() {
+
+    clientInitConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
+
+    pthread_mutex_lock(&clientSocketData.connectionStatusMutex);
+    clientSocketData.isConnected = true;
+    pthread_mutex_unlock(&clientSocketData.connectionStatusMutex);
+    if (clientSocketData.clientConnectedHandler) {
+        clientSocketData.clientConnectedHandler();
+    }
+
+    clientRegister2Server();
+}
+
+static void handleClientDisconnection() {
+    pthread_mutex_lock(&clientSocketData.connectionStatusMutex);
+    clientSocketData.isConnected = false;
+    pthread_mutex_unlock(&clientSocketData.connectionStatusMutex);
+    if (clientSocketData.clientDisconnectedHandler) {
+        clientSocketData.clientDisconnectedHandler();
+    }
+    if (clientSocketData.sockfd >= 0)
+        close(clientSocketData.sockfd);
+}
+
+static void handleClientReconnection() {
+    pthread_mutex_lock(&clientSocketData.reconnectionMutex);
+
+    handleClientDisconnection();
+    handleClientConnection();
+
+    pthread_mutex_unlock(&clientSocketData.reconnectionMutex);
+}
+
+static void* serverMessageDispatchWorker(void* arg)
+{
+    AML_LOGI("client %s: serverMessageDispatchWorker begin work......\n", clientSocketData.clientName);
+
+    while (1) {
+        // get header message part
+        MsgHeader header;
+        int length = sizeof(header);
+        int n = readn(clientSocketData.sockfd, &header, length);
+        if (n != length) {
+            if (0 == n) {
+                AML_LOGW("client %s: Disconnected with server, about to reconnect......\n", clientSocketData.clientName);
+                handleClientReconnection();
+            }
+            continue;
+        }
+        // get business message part
+        MessageType type = header.type;
+        int dataLength = header.dataLength;
+        if (type == BUSINESS_DATA) {
+            char businessData[dataLength];
+            int n = readn(clientSocketData.sockfd, businessData, sizeof(businessData));
+            if (n != dataLength) {
+                if (n == 0) {
+                    // Connection closed by the server, need to reconnect
+                    handleClientReconnection();
+                }
+                continue;
+            }
+            AML_LOGD("client %s: receive server business message......\n", clientSocketData.clientName);
+            clientSocketData.clientHandler(businessData);
+        } else if (type == HEARTBEAT) {
+            pthread_mutex_lock(&clientSocketData.beatMutex);
+            clientSocketData.beats = 0;
+            pthread_mutex_unlock(&clientSocketData.beatMutex);
+        }
+    }
+    return NULL;
+}
+
+static void* heartBeatDetector(void* arg)
+{
+    while (1) {
+        pthread_mutex_lock(&clientSocketData.beatMutex);
+        if (clientSocketData.beats > 30) {
+            AML_LOGW("client %s: disconnected with server because of the heartbeat timeout, about to reconnect......\n", clientSocketData.clientName);
+            handleClientReconnection();
+        } else {
+            clientSocketData.beats += 10;
+        }
+        pthread_mutex_unlock(&clientSocketData.beatMutex);
+        sleep(10);
+    }
+    return NULL;
+}
+
+void initClientData(ClientSocketData* clientSocketData, ClientInputData* clientInputData) {
+    if (!clientSocketData || !clientInputData) {
+        AML_LOGE("Null pointer passed to initClientData......\n");
+        return;
+    }
+
+    clientSocketData->sockfd = -1;
+    clientSocketData->beats = 0;
+
+    clientSocketData->connectIp = clientInputData->connectIp;
+    clientSocketData->clientName = clientInputData->clientName;
+    clientSocketData->connectPort = clientInputData->connectPort;
+    clientSocketData->registerBitmap = clientInputData->registerBitmap;
+
+    pthread_mutex_init(&clientSocketData->beatMutex, NULL);
+    pthread_mutex_init(&clientSocketData->writeMsgMutex, NULL);
+    pthread_mutex_init(&clientSocketData->connectionStatusMutex, NULL);
+    pthread_mutex_init(&clientSocketData->reconnectionMutex, NULL);
+
+    clientSocketData->dispatch = 0;
+    clientSocketData->clientHandler = clientInputData->clientHandler;
+    clientSocketData->clientConnectedHandler = clientInputData->clientConnectedHandler;
+}
+
+void ClientInit(ClientInputData* clientInputData)
+{
+    initClientData(&clientSocketData, clientInputData);
+    clientInitConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
+    if (clientSocketData.clientConnectedHandler)
+        clientSocketData.clientConnectedHandler();
+    int ret = pthread_create(&clientSocketData.dispatch, NULL, serverMessageDispatchWorker, NULL);
+    if (ret != 0) {
+        AML_LOGE("client %s: serverMessageDispatchWorker pthread create failed......\n", clientSocketData.clientName);
+        exit(-1);
+    }
+    ret = pthread_create(&clientSocketData.heartBeatDetect, NULL, heartBeatDetector, NULL);
+    if (ret != 0) {
+        AML_LOGE("client %s: heartBeatDetector pthread create failed......\n", clientSocketData.clientName);
+        exit(-1);
+    }
+    clientRegister2Server();
+}
+
+void ClientExit(void)
+{
+    pthread_cancel(clientSocketData.dispatch);
+    pthread_join(clientSocketData.dispatch, NULL);
+    pthread_cancel(clientSocketData.heartBeatDetect);
+    pthread_join(clientSocketData.heartBeatDetect, NULL);
+
+    pthread_mutex_destroy(&clientSocketData.beatMutex);
+    pthread_mutex_destroy(&clientSocketData.writeMsgMutex);
+    pthread_mutex_destroy(&clientSocketData.connectionStatusMutex);
+    pthread_mutex_destroy(&clientSocketData.reconnectionMutex);
+
+    handleClientDisconnection();
+}
+
 int ClientWriteMsg2Server(MessageType msgType, void* msg, const int msgLength) {
     if (BUSINESS_DATA != msgType && REGISTER != msgType) {
-        AML_LOGW("Invalid message type, please send business data......\n");
+        AML_LOGW("client %s: Invalid message type, please send business data......\n", clientSocketData.clientName);
         return -1;
     }
     MsgHeader header;
@@ -59,132 +270,12 @@ int ClientWriteMsg2Server(MessageType msgType, void* msg, const int msgLength) {
     int sent_len = writen(clientSocketData.sockfd, buffer, totalSize);
     pthread_mutex_unlock(&clientSocketData.writeMsgMutex);
     if (sent_len != totalSize)
-        AML_LOGW("Invalid message type, please send business data......\n");
+        AML_LOGW("client %s: Failed to send message, please check connection status......\n", clientSocketData.clientName);
     return sent_len;
 }
 
-void register2Server(void)
-{
-    AML_LOGI("in register2Server......\n");
-    int msgLength = sizeof(clientSocketData.registerBitmap);
-    char msg[10];
-    sprintf(msg, "%d", clientSocketData.registerBitmap);
-    int len = ClientWriteMsg2Server(REGISTER, msg, msgLength);
-    if (len == msgLength + sizeof(MsgHeader)) {
-        AML_LOGI("register server message succeed......\n");
-    } else {
-        AML_LOGE("register server message failed......\n");
-        exit(-1);
-    }
-}
-
-void* msgDispatchWorker(void* arg)
-{
-    AML_LOGI("msgDispatchWorker begin work......\n");
-
-    while (1) {
-        // get header message part
-        MsgHeader header;
-        int length = sizeof(header);
-        int n = readn(clientSocketData.sockfd, &header, length);
-        if (n != length) {
-            if (0 == n) {
-                AML_LOGW("Disconnected with server, about to reconnect......\n");
-                pthread_mutex_lock(&clientSocketData.beatMutex);
-                close(clientSocketData.sockfd);
-                initConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
-                register2Server();
-                pthread_mutex_unlock(&clientSocketData.beatMutex);
-            }
-            continue;
-        }
-
-        // get business message part
-        MessageType type = header.type;
-        int dataLength = header.dataLength;
-        if (type == BUSINESS_DATA) {
-            char businessData[8];
-            int n = readn(clientSocketData.sockfd, businessData, 8);
-            if (n != dataLength) {
-                if (n == 0) {
-                    // Connection closed by the server, need to reconnect
-
-                    pthread_mutex_lock(&clientSocketData.beatMutex);
-                    close(clientSocketData.sockfd);
-                    initConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
-                    register2Server();
-                    pthread_mutex_unlock(&clientSocketData.beatMutex);
-                }
-                continue;
-            }
-            AML_LOGD("receive server business message......\n");
-            clientSocketData.clientHandler(businessData);
-        } else if (type == HEARTBEAT) {
-            pthread_mutex_lock(&clientSocketData.beatMutex);
-            clientSocketData.beats = 0;
-            AML_LOGD("receive server heart message......\n");
-            pthread_mutex_unlock(&clientSocketData.beatMutex);
-        }
-    }
-}
-
-void* heartBeatDetectWorker(void* arg)
-{
-    while (1) {
-        pthread_mutex_lock(&clientSocketData.beatMutex);
-        if (clientSocketData.beats > 30) {
-            AML_LOGW("Disconnected with server because of the heartbeat timeout., about to reconnect......\n");
-            close(clientSocketData.sockfd);
-            initConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
-            register2Server();
-        } else {
-            clientSocketData.beats += 10;
-        }
-        pthread_mutex_unlock(&clientSocketData.beatMutex);
-        sleep(10);
-    }
-}
-
-void initClientData(ClientSocketData* clientSocketData, ClientInputData* clientInputData) {
-    if (!clientSocketData || !clientInputData) {
-        AML_LOGE("Null pointer passed to initClientData......\n");
-        return;
-    }
-
-    clientSocketData->sockfd = -1;
-    clientSocketData->beats = 0;
-
-    clientSocketData->connectIp = clientInputData->connectIp;
-    clientSocketData->connectPort = clientInputData->connectPort;
-    clientSocketData->registerBitmap = clientInputData->registerBitmap;
-
-    pthread_mutex_init(&clientSocketData->beatMutex, NULL);
-    pthread_mutex_init(&clientSocketData->writeMsgMutex, NULL);
-
-    clientSocketData->dispatch = 0;
-    clientSocketData->clientHandler = clientInputData->clientHandler;
-}
-
-void ClientInit(ClientInputData* clientInputData)
-{
-    initClientData(&clientSocketData, clientInputData);
-    initConnection(&clientSocketData.sockfd, clientSocketData.connectIp, clientSocketData.connectPort);
-    register2Server();
-    int ret = pthread_create(&clientSocketData.dispatch, NULL, msgDispatchWorker, NULL);
-    if (ret != 0) {
-        AML_LOGE("msgDispatchWorker pthread create failed......\n");
-        exit(-1);
-    }
-    ret = pthread_create(&clientSocketData.heartBeatDetect, NULL, heartBeatDetectWorker, NULL);
-    if (ret != 0) {
-        AML_LOGE("heartBeatDetectWorker pthread create failed......\n");
-        exit(-1);
-    }
-
-}
-
-void ClientExit(void)
-{
-    pthread_join(clientSocketData.dispatch, NULL);
-    pthread_join(clientSocketData.heartBeatDetect, NULL);
+void ClientGetConnectionStatus(int* connectStatus) {
+    pthread_mutex_lock(&clientSocketData.connectionStatusMutex);
+    *connectStatus = clientSocketData.isConnected;
+    pthread_mutex_unlock(&clientSocketData.connectionStatusMutex);
 }

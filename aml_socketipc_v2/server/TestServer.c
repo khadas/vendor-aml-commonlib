@@ -169,6 +169,7 @@ void initializeServerInputData(ServerInputData* serverInputData, int port)
 {
 
     serverInputData->connectPort = port;
+    serverInputData->serverName = "testServer";
 
     serverInputData->serverHandler = handleClientMsgAction;
 }
