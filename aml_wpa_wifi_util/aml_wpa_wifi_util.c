@@ -677,8 +677,13 @@ int wpa_wifi_init (const char* wpa_supl_ctrl, wpa_wifi_connect_callback connect_
 
     while (g_wpa_manager.ctrl_handle == NULL) {
         g_wpa_manager.ctrl_handle = wpa_ctrl_open(wpa_supl_ctrl);
-        if (retry++ > MAX_RETRY) break;
+        if (++retry > MAX_RETRY) break;
         sleep(1);
+    }
+
+    if (retry > MAX_RETRY) {
+        AML_LOGE("failed to open wpa_supplicant control interface \n");
+        return RETURN_ERR;
     }
 
     init_cur_wifi_status();
