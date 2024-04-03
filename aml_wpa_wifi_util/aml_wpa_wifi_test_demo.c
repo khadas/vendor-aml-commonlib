@@ -34,12 +34,16 @@
 #include <signal.h>
 
 #include "aml_wpa_wifi_util.h"
+#include "aml_log.h"
 
 #define INVALID_INPUT -99
-#define MAX_TEST_CASE 8
+#define MAX_TEST_CASE 11
 #define INPUT_NUMBER(var, ...) get_input_string(type_int,    var, __VA_ARGS__)
 #define INPUT_STRING(var, ...) get_input_string(type_string, var, __VA_ARGS__)
 #define INPUT_CHAR(var, ...)   get_input_string(type_char,   var, __VA_ARGS__)
+
+AML_LOG_DEFINE(aml_wpa_wifi_test_demo)
+#define AML_LOG_DEFAULT AML_LOG_GET_CAT(aml_wpa_wifi_test_demo)
 
 static const char *wpa_wifi_connection_status_strings[] = {
     "WPA_WIFI_INVALID",
@@ -129,13 +133,17 @@ void help()
     printf(" [ 6 ]    Get current wifi scan status      \n");
     printf(" [ 7 ]    Get current wifi connection info  \n");
     printf(" [ 8 ]    Get current connected ssid&pw     \n");
+    printf(" [ 9 ]    List the saved network id&&ssid   \n");
+    printf(" [ 10 ]   Select the network id to connect  \n");
+    printf(" [ 11 ]   Remove the network id             \n");
     printf(" [ h ]    Show this list                    \n");
     printf(" [ q ]    Quit                              \n");
     printf("***********************************************************************\n");
 }
 
 int main() {
-    wpa_wifi_init(DEFAULT_WPA_SUPL_CTRL, demo_wifi_connect_callback, 0, 1);
+    aml_log_set_from_string("all:LOG_DEBUG");
+    wpa_wifi_init(DEFAULT_WPA_SUPL_CTRL, demo_wifi_connect_callback, 1, 1);
 
     char input[16];
     char ssid[WPA_SSID_SIZE_MAX];
@@ -146,6 +154,10 @@ int main() {
     int select;
     int ret;
     int is_ap_sort_by_signal_strength;
+    WPA_WIFI_NETWORK_ID_INFO network_info[MAX_NETWORKS];
+    int network_num;
+    int network_id_to_connect;
+    int network_id_to_remove;
 
     signal(SIGTERM, exit_handler);
     signal(SIGINT,  exit_handler);
@@ -217,6 +229,37 @@ int main() {
                 printf("current connected Wi-Fi Password: %s\n", password);
             } else {
                 printf("failed to get current Wi-Fi SSID and password.\n");
+            }
+            break;
+        case 9:
+            ret = wpa_wifi_get_networks_info(network_info, sizeof(network_info) / sizeof(network_info[0]), &network_num);
+            if (ret == RETURN_OK) {
+                printf("Number of networks: %d\n", network_num);
+                printf("Network ID\tSSID\n");
+                printf("--------------------------\n");
+                for (int i = 0; i < network_num; ++i) {
+                    printf("%d\t\t%s\n", network_info[i].network_id, network_info[i].ssid);
+                }
+            } else {
+                printf("Failed to get network information.\n");
+            }
+            break;
+        case 10:
+            INPUT_NUMBER(&network_id_to_connect, "[[ Please enter the network id to connect]] \n");
+            ret = wpa_wifi_connect_with_network_id(network_id_to_connect);
+            if (ret == RETURN_OK) {
+                printf("set network id to %d successfully\n", network_id_to_connect);
+            } else {
+                printf("failed to set network id to %d\n", network_id_to_connect);
+            }
+            break;
+        case 11:
+            INPUT_NUMBER(&network_id_to_remove, "[[ Please enter the network id to remove (-1 means remove all)]] \n");
+            ret = wpa_wifi_send_remove_network(network_id_to_remove, 1);
+            if (ret == RETURN_OK) {
+                printf("remove network id to %d successfully\n", network_id_to_remove);
+            } else {
+                printf("failed to remove network id %d\n", network_id_to_remove);
             }
             break;
         default:

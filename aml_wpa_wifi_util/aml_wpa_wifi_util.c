@@ -79,16 +79,16 @@ static int parse_scan_results(char *res_buf, int is_sort_by_strength) {
             end = strchr(start, delim);                                          \
             if (!end) {                                                          \
                 break;                                                           \
-            }                                                                     \
-        }                                                                         \
+            }                                                                    \
+        }                                                                        \
         size_t length = end - start;                                             \
         if (length >= sizeof(output)) {                                          \
             break;                                                               \
-        }                                                                         \
+        }                                                                        \
         memcpy(output, start, length);                                           \
         output[length] = '\0';                                                   \
         start = end + 1;                                                         \
-        token++;                                                                  \
+        token++;                                                                 \
     }
 
     // Parse scan results
@@ -143,45 +143,6 @@ static int parse_scan_results(char *res_buf, int is_sort_by_strength) {
     return count;
 }
 
-static int extract_psk_from_wpa_conf(const char *filename, const char *target_ssid, char *output_psk) {
-    FILE *file = fopen(filename, "r");
-    if (file == NULL) {
-        AML_LOGE("Error opening %s file\n", filename);
-        return RETURN_ERR;
-    }
-
-    char line[MAX_LINE_LENGTH];
-    char current_ssid[WPA_SSID_SIZE_MAX];
-    char current_psk[WPA_PSK_SIZE_MAX];
-
-    output_psk[0] = '\0';
-
-    while (fgets(line, MAX_LINE_LENGTH, file) != NULL) {
-        if (strstr(line, "network={") != NULL) {
-            current_ssid[0] = '\0';
-            current_psk[0] = '\0';
-
-            while (fgets(line, MAX_LINE_LENGTH, file) != NULL) {
-                if (strstr(line, "ssid=") != NULL) {
-                    sscanf(line, " ssid=\"%[^\"]\"", current_ssid);
-                }
-                else if (strstr(line, "psk=") != NULL) {
-                    sscanf(line, " psk=\"%[^\"]\"", current_psk);
-                }
-                else if (strstr(line, "}") != NULL) {
-                    break;
-                }
-            }
-            if (strcmp(current_ssid, target_ssid) == 0) {
-                strcpy(output_psk, current_psk);
-                return RETURN_OK;
-            }
-        }
-    }
-    fclose(file);
-    return RETURN_ERR;
-}
-
 static int send_wpa_cli_command(char *reply, size_t reply_len, const char *cmd, ...) {
     char cmd_buf[WPA_SUP_CMD_MAX];
     int ret;
@@ -210,6 +171,83 @@ static int send_wpa_cli_command(char *reply, size_t reply_len, const char *cmd, 
     }
     AML_LOGD("send wpa cmd is %s \n", cmd_buf);
     return WPA_SUP_CMD_SUCCESSFUL;
+}
+
+static int wpa_wifi_get_current_connected_id(int* network_id) {
+    if (network_id == NULL) {
+        AML_LOGE("Error: NULL pointer of network_id passed.\n");
+        return RETURN_ERR;
+    }
+
+    char result[512];
+    int ret;
+    int result_len = sizeof(result) - 1;
+
+    // Get current network id
+    pthread_mutex_lock(&g_wpa_manager.sup_lock);
+    ret = send_wpa_cli_command(result, result_len, "STATUS");
+    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    if (ret) {
+        AML_LOGE("send wpa cmd STATUS fail\n");
+        return ret;
+    }
+
+    char* cur_line = strtok(result, "\n");
+    while (cur_line != NULL) {
+        if (strncmp(cur_line, "id=", 3) == 0) {
+            *network_id = atoi(cur_line + 3);
+            AML_LOGD("Network ID found in STATUS command result, ID is %d\n", *network_id);
+            return RETURN_OK;
+        }
+        cur_line = strtok(NULL, "\n");
+    }
+
+    AML_LOGE("Network ID not found in STATUS command result.\n");
+    return RETURN_ERR;
+}
+
+static int wpa_wifi_get_current_connected_ssid(char* ssid) {
+    if (ssid == NULL) {
+        AML_LOGE("Error: NULL pointer of ssid passed.\n");
+        return RETURN_ERR;
+    }
+    int cur_network_id;
+    if (wpa_wifi_get_current_connected_id(&cur_network_id) == RETURN_OK) {
+        strcpy(ssid, g_wpa_manager.network_info[cur_network_id].ssid);
+        return RETURN_OK;
+    }
+
+    AML_LOGE("SSID not found.\n");
+    return RETURN_ERR;
+}
+
+int wpa_wifi_get_password_for_ssid(const char* ssid, char* password) {
+    FILE* conf = fopen(WPA_SUPPLICANT_CONF_PATH, "r");
+    if (!conf) {
+        AML_LOGE("Failed to open wpa_supplicant.conf.\n");
+        return RETURN_ERR;
+    }
+
+    char line[256];
+    int ssid_found = 0;
+    while (fgets(line, sizeof(line), conf) != NULL) {
+        if (strstr(line, ssid) && strstr(line, "ssid=\"")) {
+            ssid_found = 1;
+        } else if (ssid_found && strstr(line, "psk=\"")) {
+            char* psk_start = strstr(line, "psk=\"") + 5;
+            char* psk_end = strchr(psk_start, '\"');
+            if (psk_end) {
+                *psk_end = '\0';
+                strncpy(password, psk_start, psk_end - psk_start + 1);
+                fclose(conf);
+                return RETURN_OK;
+            }
+        }
+    }
+
+    fclose(conf);
+    AML_LOGE("PSK not found for SSID %s.\n", ssid);
+    return RETURN_ERR;
 }
 
 int wpa_wifi_send_scan_cmd() {
@@ -337,25 +375,190 @@ int wpa_wifi_send_reconnect_cmd() {
     return ret;
 }
 
-int wpa_wifi_send_connect_cmd(const char* ssid, const char* password) {
+/*
+    When an incorrect ssid or password is entered, the thread can remove the failed connection of the network
+*/
+static void* new_connection_monitor_thread_function(void* arg) {
+
+    int timer = 0;
+    char tmp_msg[64];
+    while (!g_wpa_manager.monitor_is_stop && timer < MAX_NEW_CONNECTION_TIMEOUT)
+    {
+        if (g_wpa_manager.cur_wifi_status == WPA_WIFI_SUCCESS) {
+            break;
+        }
+        sleep(1);
+        timer++;
+        AML_LOGD("New network %d is connecting, time cost is %d seconds\n", g_wpa_manager.pending_network_id, timer);
+    }
+
+    if (timer >= MAX_NEW_CONNECTION_TIMEOUT) {
+        // This means that all networks have failed and the device is not connected to any network at this time.
+        AML_LOGD("Network [id is %d] setup failed, reason is time-out\n", g_wpa_manager.pending_network_id);
+        pthread_mutex_lock(&g_wpa_manager.sup_lock);
+        --g_wpa_manager.network_num;
+        send_wpa_cli_command(tmp_msg, sizeof(tmp_msg)-1, "SET_NETWORK %d priority %d", g_wpa_manager.previous_connected_network_id, CONNECT_NETWORK_PRIORITY);
+        if (g_wpa_manager.pending_network_id == g_wpa_manager.network_num) {
+            // Only newly added networks that do not have a successful connection will be removed.
+            send_wpa_cli_command(tmp_msg, sizeof(tmp_msg)-1, "REMOVE_NETWORK %d", g_wpa_manager.pending_network_id);
+        }
+        g_wpa_manager.pending_network_id = -1;
+        g_wpa_manager.cur_network_id = -1;
+        g_wpa_manager.previous_connected_network_id = -1;
+        g_wpa_manager.cur_wifi_status = WPA_WIFI_ERROR_UNKNOWN;
+        pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    } else {
+        // Connected to the network, but not sure if the new network is successfully connected or if automatically connected to another network,
+        // so need to determine the corresponding network id.
+        AML_LOGD("Current connected network id is %d, pending network id is %d\n", g_wpa_manager.cur_network_id, g_wpa_manager.pending_network_id);
+        pthread_mutex_lock(&g_wpa_manager.sup_lock);
+        if (g_wpa_manager.cur_network_id != g_wpa_manager.pending_network_id) {
+            --g_wpa_manager.network_num;
+            if (g_wpa_manager.cur_network_id != g_wpa_manager.previous_connected_network_id) {
+                send_wpa_cli_command(tmp_msg, sizeof(tmp_msg)-1, "SET_NETWORK %d priority %d", g_wpa_manager.previous_connected_network_id, DEFAULT_PRIORITY);
+            }
+            if (g_wpa_manager.pending_network_id == g_wpa_manager.network_num) {
+                // Only newly added networks that do not have a successful connection will be removed.
+                send_wpa_cli_command(tmp_msg, sizeof(tmp_msg)-1, "REMOVE_NETWORK %d", g_wpa_manager.pending_network_id);
+            }
+            AML_LOGD("Network [id is %d] setup failed, have re-set the last connected network [id is %d]\n", g_wpa_manager.pending_network_id, g_wpa_manager.cur_network_id);
+            g_wpa_manager.previous_connected_network_id = -1;
+            g_wpa_manager.pending_network_id = -1;
+        } else {
+            // new network is successfully set up, just set the priority of the last network
+            AML_LOGD("Network [id is %d] setup successfully\n", g_wpa_manager.cur_network_id);
+            send_wpa_cli_command(tmp_msg, sizeof(tmp_msg)-1, "SET_NETWORK %d priority %d", g_wpa_manager.previous_connected_network_id, DEFAULT_PRIORITY);
+            g_wpa_manager.previous_connected_network_id = -1;
+            g_wpa_manager.pending_network_id = -1;
+        }
+        pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    }
+    if (g_wpa_manager.save_when_connected) {
+        wpa_wifi_send_save_config_cmd();
+    }
+
+    return NULL;
+}
+
+/*
+    Connect to the specified wifi via network id
+*/
+int wpa_wifi_connect_with_network_id(int network_id) {
+    if (network_id < 0 || network_id >= g_wpa_manager.network_num) {
+        AML_LOGI("Invalid network ID: %d, current network ID count: %d\n", network_id, g_wpa_manager.network_num);
+        return RETURN_ERR;
+    }
     char result[64];
     pthread_mutex_lock(&g_wpa_manager.sup_lock);
+
     g_wpa_manager.cur_wifi_status = WPA_WIFI_INVALID;
-    send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK %d", g_wpa_manager.cur_enable_network_id);
+
+    g_wpa_manager.previous_connected_network_id = g_wpa_manager.cur_network_id;
+    g_wpa_manager.pending_network_id = network_id;
+    if (g_wpa_manager.auto_connect_when_fail) {
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d priority %d", g_wpa_manager.previous_connected_network_id, LAST_CONNECT_PRIORITY);
+        send_wpa_cli_command(result, sizeof(result)-1, "ENABLE_NETWORK all");
+    } else {
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d priority %d", g_wpa_manager.previous_connected_network_id, DEFAULT_PRIORITY);
+        send_wpa_cli_command(result, sizeof(result)-1, "DISABLE_NETWORK all");
+    }
+
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d priority %d", g_wpa_manager.pending_network_id, CONNECT_NETWORK_PRIORITY);
+    send_wpa_cli_command(result, sizeof(result)-1, "ENABLE_NETWORK %d", g_wpa_manager.pending_network_id);
+    send_wpa_cli_command(result, sizeof(result)-1, "REASSOCIATE");
+    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+
+    // Start a thread to monitor new connection
+    pthread_t new_connection_monitor_thread;
+    pthread_create(&new_connection_monitor_thread, NULL, new_connection_monitor_thread_function, NULL);
+
+    return RETURN_OK;
+}
+
+int wpa_wifi_send_connect_cmd(const char* ssid, const char* password) {
+    char result[64];
+    int network_id;
+    pthread_mutex_lock(&g_wpa_manager.sup_lock);
+
     send_wpa_cli_command(result, sizeof(result)-1, "ADD_NETWORK");
+    network_id = atoi(result);
+    g_wpa_manager.network_num++;
+    g_wpa_manager.network_info[network_id].network_id = network_id;
+    strcpy(g_wpa_manager.network_info[network_id].ssid, ssid);
+    AML_LOGI("Added new network with network ID: %d\n", network_id);
 
     // set ssid
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d ssid \"%s\"", g_wpa_manager.cur_enable_network_id, ssid);
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d key_mgmt WPA-PSK", g_wpa_manager.cur_enable_network_id);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d ssid \"%s\"", network_id, ssid);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d key_mgmt WPA-PSK", network_id);
     // set psk
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d psk \"%s\"", g_wpa_manager.cur_enable_network_id, password);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d psk \"%s\"", network_id, password);
 
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d pairwise CCMP TKIP", g_wpa_manager.cur_enable_network_id);
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d group CCMP TKIP", g_wpa_manager.cur_enable_network_id);
-    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d proto RSN", g_wpa_manager.cur_enable_network_id);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d pairwise CCMP TKIP", network_id);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d group CCMP TKIP", network_id);
+    send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d proto RSN", network_id);
 
-    send_wpa_cli_command(result, sizeof(result)-1, "ENABLE_NETWORK %d", g_wpa_manager.cur_enable_network_id);
-    send_wpa_cli_command(result, sizeof(result)-1, "REASSOCIATE");
+    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+
+    wpa_wifi_connect_with_network_id(network_id);
+
+    return RETURN_OK;
+}
+
+int wpa_wifi_send_remove_network(int network_id, int is_save_config) {
+    if (network_id < -1 || network_id >= g_wpa_manager.network_num) {
+        AML_LOGI("Invalid network ID: %d, current network ID count: %d\n", network_id, g_wpa_manager.network_num);
+        return RETURN_ERR;
+    }
+    char result[64];
+    pthread_mutex_lock(&g_wpa_manager.sup_lock);
+    // -1 means all
+    if (-1 == network_id) {
+        g_wpa_manager.network_num = 0;
+        send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK all");
+    } else if (g_wpa_manager.network_num - 1 == network_id) {
+        send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK %d", network_id);
+        --g_wpa_manager.network_num;
+    } else {
+        // Because when wpa_supplicant add_network only supports +1 on the largest id, so if remove_network is not the largest id,
+        // there will be free ids that are not being used, so the swap is applied
+        char value[64];
+        char password[64];
+        int max_network_id = g_wpa_manager.network_num - 1;
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d ssid", max_network_id);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d ssid %s", network_id, value);
+
+        wpa_wifi_get_password_for_ssid(value, password);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d psk \"%s\"", network_id, password);
+
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d key_mgmt", max_network_id);
+
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d key_mgmt %s", network_id, value);
+
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d pairwise", max_network_id);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d pairwise %s", network_id, value);
+
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d group", max_network_id);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d group %s", network_id, value);
+
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d proto", max_network_id);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d proto %s", network_id, value);
+
+        send_wpa_cli_command(value, sizeof(value)-1, "GET_NETWORK %d priority", max_network_id);
+        send_wpa_cli_command(result, sizeof(result)-1, "SET_NETWORK %d priority %s", network_id, value);
+
+        send_wpa_cli_command(result, sizeof(result)-1, "REMOVE_NETWORK %d", max_network_id);
+
+        strcpy(g_wpa_manager.network_info[network_id].ssid, g_wpa_manager.network_info[max_network_id].ssid);
+        --g_wpa_manager.network_num;
+
+        if (g_wpa_manager.cur_network_id == max_network_id || g_wpa_manager.cur_network_id == network_id)
+            send_wpa_cli_command(result, sizeof(result)-1, "REASSOCIATE");
+    }
+
+    if (is_save_config) {
+        send_wpa_cli_command(result, sizeof(result)-1, "SAVE_CONFIG");
+    }
+
     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
 
     return RETURN_OK;
@@ -378,7 +581,7 @@ static void* wpa_wifi_event_monitor_thread() {
             if (0 == wpa_ctrl_recv(g_wpa_manager.ctrl_handle, event_buf, &event_buf_len)) {
                 start = strchr(event_buf, '>') + 1;
                 if (start == NULL) continue;
-                AML_LOGI("Received event (length = %d) message: %s\n", (int)event_buf_len, start);
+                // AML_LOGD("Received event (length = %d) message: %s\n", (int)event_buf_len, start);
 
                 if (strstr(start, WPA_EVENT_SCAN_STARTED) != NULL) {
                     AML_LOGI("Scanning started \n");
@@ -388,7 +591,7 @@ static void* wpa_wifi_event_monitor_thread() {
                     if (g_wpa_manager.cur_scan_status == WPA_WIFI_SCAN_STATE_CMD_SENT) {
                         /* Flush the BSS everytime so that there is no stale information */
                         AML_LOGI("Flushing the BSS now\n");
-                        send_wpa_cli_command(result_buf, sizeof(result_buf)-1, "BSS_FLUSH %d", g_wpa_manager.cur_enable_network_id);
+                        send_wpa_cli_command(result_buf, sizeof(result_buf)-1, "BSS_FLUSH %d", g_wpa_manager.cur_network_id);
                         g_wpa_manager.cur_scan_status = WPA_WIFI_SCAN_STATE_STARTED;
                     }
                     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
@@ -409,57 +612,40 @@ static void* wpa_wifi_event_monitor_thread() {
                 }
                 else if (strstr(start, WPS_EVENT_TIMEOUT) != NULL) {
                     AML_LOGI("WPS Connection is timeout\n");
-                    char cur_ssid[WPA_SSID_SIZE_MAX];
                     pthread_mutex_lock(&g_wpa_manager.sup_lock);
-                    // get ssid
-                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
                     g_wpa_manager.cur_wifi_status = WPA_WIFI_ERROR_NOT_FOUND;
                     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
-                    if (g_wpa_manager.connect_callback) {
-                        g_wpa_manager.connect_callback(cur_ssid, &g_wpa_manager.cur_wifi_status);
-                    }
                 }
                 else if (strstr(start, WPS_EVENT_SUCCESS) != NULL) {
                     AML_LOGI("WPS is successful...Associating now\n");
                 }
                 else if (strstr(start, WPA_EVENT_CONNECTED) != NULL) {
                     AML_LOGI("Authentication completed successfully and data connection enabled\n");
-                    char cur_ssid[WPA_SSID_SIZE_MAX];
+                    // get current connected network id
+                    wpa_wifi_get_current_connected_id(&g_wpa_manager.cur_network_id);
+                    AML_LOGD("Current ssid is %s\n", g_wpa_manager.network_info[g_wpa_manager.cur_network_id].ssid);
                     pthread_mutex_lock(&g_wpa_manager.sup_lock);
-                    // get ssid
-                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
-                    if (strcmp(g_wpa_manager.cur_connected_ssid, cur_ssid) != 0) {
-                        // mean new ssid connection
-                        strcpy(g_wpa_manager.cur_connected_ssid, cur_ssid);
-                        AML_LOGD("Update the current connected ssid to %s\n", cur_ssid);
-                    }
                     g_wpa_manager.cur_wifi_status = WPA_WIFI_SUCCESS;
-
+                    send_wpa_cli_command(result_buf, sizeof(result_buf)-1, "SET_NETWORK %d priority %d", g_wpa_manager.cur_network_id, CONNECT_NETWORK_PRIORITY);
                     if (g_wpa_manager.save_when_connected) {
                         send_wpa_cli_command(result_buf, sizeof(result_buf)-1,"SAVE_CONFIG");
                     }
                     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
                     if (g_wpa_manager.connect_callback) {
-                        g_wpa_manager.connect_callback(cur_ssid, &g_wpa_manager.cur_wifi_status);
+                        g_wpa_manager.connect_callback(g_wpa_manager.network_info[g_wpa_manager.cur_network_id].ssid, &g_wpa_manager.cur_wifi_status);
                     }
                 }
                 else if (strstr(start, WPA_EVENT_DISCONNECTED) != NULL) {
-                    char cur_ssid[WPA_SSID_SIZE_MAX];
                     pthread_mutex_lock(&g_wpa_manager.sup_lock);
-                    // get ssid
-                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
                     g_wpa_manager.cur_wifi_status = WPA_WIFI_DISCONNECTED;
                     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
-                    AML_LOGI("Disconnected from the network:%s\n", cur_ssid);
-                    if (g_wpa_manager.connect_callback) {
-                        g_wpa_manager.connect_callback(cur_ssid, &g_wpa_manager.cur_wifi_status);
-                    }
+                    AML_LOGI("Disconnected from the network\n");
                 }
-                else if (strstr(start, WPA_EVENT_TEMP_DISABLED) != NULL){
+                else if (strstr(start, WPA_EVENT_TEMP_DISABLED) != NULL) {
                     char cur_ssid[WPA_SSID_SIZE_MAX];
                     pthread_mutex_lock(&g_wpa_manager.sup_lock);
                     // get ssid
-                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
+                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_network_id);
 
                     AML_LOGI("Network authentication failure (Incorrect password), ssid is %s\n", cur_ssid);
 
@@ -470,18 +656,10 @@ static void* wpa_wifi_event_monitor_thread() {
                     }
                 }
                 else if (strstr(start, WPA_EVENT_NETWORK_NOT_FOUND) != NULL) {
-                    char cur_ssid[WPA_SSID_SIZE_MAX];
                     pthread_mutex_lock(&g_wpa_manager.sup_lock);
-                    // get ssid
-                    send_wpa_cli_command(cur_ssid, sizeof(cur_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
-
-                    AML_LOGI("Received a network not found event, ssid is %s\n", cur_ssid);
-
+                    AML_LOGI("Received a network not found event\n");
                     g_wpa_manager.cur_wifi_status = WPA_WIFI_ERROR_NOT_FOUND;
                     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
-                    if (g_wpa_manager.connect_callback) {
-                        g_wpa_manager.connect_callback(cur_ssid, &g_wpa_manager.cur_wifi_status);
-                    }
                 }
                 else {
                     continue;
@@ -577,102 +755,126 @@ int wpa_wifi_get_current_connected_ssid_and_password(char* ssid, char* password)
         AML_LOGE("Error: NULL pointer of ssid or password passed.\n");
         return RETURN_ERR;
     }
-    char result[512];
-    int ret;
-    int result_len = sizeof(result)-1;
 
-    // Get current ssid
-    if (g_wpa_manager.cur_wifi_status != WPA_WIFI_SUCCESS) {
-        AML_LOGW("Current wifi is unconnected \n");
-        return RETURN_ERR;
-    }
-    pthread_mutex_lock(&g_wpa_manager.sup_lock);
-    ret = send_wpa_cli_command(result, result_len, "STATUS");
-    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
-    if (ret) {
-        AML_LOGE("send wpa cmd STATUS fail\n");
-        return ret;
-    }
-    char* cur_line = strtok(result, "\n");
-    while (cur_line != NULL) {
-        if (strncmp(cur_line, "ssid=", 5) == 0) {
-            char* ssid_start = cur_line + 5;
-            char* ssid_end = strchr(ssid_start, '\0');
-            if (ssid_end) {
-                *ssid_end = '\0'; // Null-terminate the SSID string
-                strncpy(ssid, ssid_start, ssid_end - ssid_start + 1);
-                break;
-            } else {
-                AML_LOGE("SSID not found in STATUS command result.\n");
-                return RETURN_ERR;
-            }
-        }
-        cur_line = strtok(NULL, "\n");
-    }
-
-    if (cur_line == NULL) {
-        AML_LOGE("SSID not found in STATUS command result.\n");
+    // Get current SSID
+    if (wpa_wifi_get_current_connected_ssid(ssid) != RETURN_OK) {
         return RETURN_ERR;
     }
 
-    // Read the wpa_supplicant.conf file to find the PSK for the current SSID
-    FILE* conf = fopen(WPA_SUPPLICANT_CONF_PATH, "r");
-    if (!conf) {
-        AML_LOGE("Failed to open wpa_supplicant.conf.\n");
+    // Get password for the current SSID
+    if (wpa_wifi_get_password_for_ssid(ssid, password) != RETURN_OK) {
         return RETURN_ERR;
     }
 
-    char line[256];
-    int ssid_found = 0;
-    while (fgets(line, sizeof(line), conf) != NULL) {
-        if (strstr(line, ssid) && strstr(line, "ssid=\"")) {
-            ssid_found = 1;
-        } else if (ssid_found && strstr(line, "psk=\"")) {
-            char* psk_start = strstr(line, "psk=\"") + 5;
-            char* psk_end = strchr(psk_start, '\"');
-            if (psk_end) {
-                *psk_end = '\0';
-                strncpy(password, psk_start, psk_end - psk_start + 1);
-                fclose(conf);
-                return RETURN_OK;
-            }
+    return RETURN_OK;
+}
+
+int wpa_wifi_get_networks_info(WPA_WIFI_NETWORK_ID_INFO network_info[], const int array_size, int* network_num) {
+    if (network_info == NULL || network_num == NULL) {
+        return RETURN_ERR;
+    }
+    if (g_wpa_manager.network_num <= 0 || g_wpa_manager.network_info == NULL) {
+        *network_num = 0;
+        return RETURN_OK;
+    }
+    int copy_num = (g_wpa_manager.network_num < array_size) ? g_wpa_manager.network_num : array_size;
+
+    for (int i = 0; i < copy_num; ++i) {
+        network_info[i].network_id = g_wpa_manager.network_info[i].network_id;
+        strncpy(network_info[i].ssid, g_wpa_manager.network_info[i].ssid, sizeof(network_info[i].ssid));
+    }
+
+    *network_num = copy_num;
+    return RETURN_OK;
+}
+
+/*
+    Determine if the input ssid has been saved in the configuration,
+    if yes, get the corresponding network id;
+*/
+int wpa_wifi_ssid_is_saved_in_config(const char* ssid, int* network_id) {
+    if (!ssid || !network_id) return 0;
+    for (int i = 0; i < g_wpa_manager.network_num; i++) {
+        if (strcmp(g_wpa_manager.network_info[i].ssid, ssid) == 0) {
+            *network_id = g_wpa_manager.network_info[i].network_id;
+            return 1;
         }
     }
-
-    fclose(conf);
-    AML_LOGE("PSK not found for SSID %s.\n", ssid);
-    return RETURN_ERR;
-
+    return 0;
 }
 
 /*
     Mainly to make sure to get the status of connected, when the wifi is already connected;
     the other statuses don't matter
 */
-static int init_cur_wifi_status() {
+static void init_cur_wifi_status() {
     char result[512];
     int ret;
     pthread_mutex_lock(&g_wpa_manager.sup_lock);
     ret = send_wpa_cli_command(result, sizeof(result)-1, "STATUS");
     pthread_mutex_unlock(&g_wpa_manager.sup_lock);
     if (!ret) {
-        AML_LOGI("get wpa wifi STATUS successfully, scurrent status is :\n %s\n", result);
-        if (strstr(result, "wpa_state=COMPLETED") != NULL) {
-            g_wpa_manager.cur_wifi_status = WPA_WIFI_SUCCESS;
+        AML_LOGI("get wpa wifi STATUS successfully, current status is:\n%s\n", result);
+
+        char *pos = result;
+        char *token;
+        while ((token = strtok_r(pos, "\n", &pos)) != NULL) {
+            if (strstr(token, "wpa_state=COMPLETED") != NULL) {
+                g_wpa_manager.cur_wifi_status = WPA_WIFI_SUCCESS;
+            } else if (strstr(token, "id=") != NULL) {
+                sscanf(token, "id=%d", &g_wpa_manager.cur_network_id);
+            }
         }
+
+        AML_LOGI("Connection Status: %s\n", (g_wpa_manager.cur_wifi_status == WPA_WIFI_SUCCESS) ? "Connected" : "Disconnected");
+        AML_LOGI("Current Network ID: %d\n", g_wpa_manager.cur_network_id);
     } else {
-        AML_LOGE("get wpa wifi STATUS fail\n");
+        AML_LOGE("Get wpa wifi STATUS fail\n");
     }
-    return ret;
 }
 
-int wpa_wifi_init (const char* wpa_supl_ctrl, wpa_wifi_connect_callback connect_callback, int enable_network_id, int save_when_connected) {
+/*
+    Load content locally from list_networks, include network id and ssid
+*/
+static void init_network_info() {
+    char result[512];
+    int ret;
+    int num_networks = 0;
+    pthread_mutex_lock(&g_wpa_manager.sup_lock);
+    ret = send_wpa_cli_command(result, sizeof(result)-1, "LIST_NETWORKS");
+    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    if (!ret) {
+        char *pos = result;
+        char *token;
+        while ((token = strtok_r(pos, "\n", &pos)) != NULL) {
+            if (strstr(token, "network id") != NULL || strstr(token, "---") != NULL) {
+                continue;
+            }
+            int network_id;
+            char ssid[WPA_SSID_SIZE_MAX];
+            if (sscanf(token, "%d\t%[^\t\n]", &network_id, ssid) == 2 && num_networks < MAX_NETWORKS) {
+                g_wpa_manager.network_info[num_networks].network_id = network_id;
+                strcpy(g_wpa_manager.network_info[num_networks].ssid, ssid);
+                num_networks++;
+            }
+        }
+        g_wpa_manager.network_num = num_networks;
+        AML_LOGI("Number of networks: %d\n", g_wpa_manager.network_num);
+    } else {
+        AML_LOGE("Failed to get network list\n");
+    }
+}
+
+int wpa_wifi_init(const char* wpa_supl_ctrl, wpa_wifi_connect_callback connect_callback, int save_when_connected, int auto_connect_when_fail) {
     int retry = 0;
     g_wpa_manager.connect_callback = connect_callback;
-    g_wpa_manager.cur_enable_network_id = enable_network_id;
     g_wpa_manager.save_when_connected = save_when_connected;
+    g_wpa_manager.auto_connect_when_fail = auto_connect_when_fail;
+    g_wpa_manager.cur_network_id = -1;
+    g_wpa_manager.network_num = 0;
+    g_wpa_manager.previous_connected_network_id = -1;
+    g_wpa_manager.pending_network_id = -1;
     g_wpa_manager.monitor_is_stop = 0;
-    g_wpa_manager.cur_connected_ssid[0] = '\0';
     g_wpa_manager.ctrl_handle = wpa_ctrl_open(wpa_supl_ctrl);
 
     while (g_wpa_manager.ctrl_handle == NULL) {
@@ -687,10 +889,7 @@ int wpa_wifi_init (const char* wpa_supl_ctrl, wpa_wifi_connect_callback connect_
     }
 
     init_cur_wifi_status();
-    // get current ssid
-    pthread_mutex_lock(&g_wpa_manager.sup_lock);
-    send_wpa_cli_command(g_wpa_manager.cur_connected_ssid, sizeof(g_wpa_manager.cur_connected_ssid)-1,"GET_NETWORK %d ssid", g_wpa_manager.cur_enable_network_id);
-    pthread_mutex_unlock(&g_wpa_manager.sup_lock);
+    init_network_info();
 
     if (wpa_ctrl_attach(g_wpa_manager.ctrl_handle) != 0) {
         AML_LOGE("wpa_ctrl_attach failed \n");
