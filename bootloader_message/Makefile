@@ -1,6 +1,7 @@
+OUT_DIR ?= .
+LDFLAGS += -L $(OUT_DIR)/
 LIB = libbootloader_message.a
 OBJS = bootloader_message.o bootloader_avb.o avb_crc32.o
-OUT_DIR ?= .
 .PHONY: all install clean
 
 %.o: %.c

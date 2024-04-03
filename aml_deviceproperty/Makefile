@@ -1,29 +1,32 @@
+OUT_DIR ?= .
 #LIBLOG_SRC_DIR ?= .
 CC ?= gcc
 LD ?= ld
 OBJC = aml_device_property.o
 CFLAGS += -fPIC
-LDFLAGS +=
+LDFLAGS += -L $(OUT_DIR)/
 LDLIBS = -L./ -lamldeviceproperty
 TARGET=libamldeviceproperty.so
+
+$(info "OUT_DIR : $(OUT_DIR)")
 
 # rules
 all: $(TARGET)
 
 $(TARGET): $(OBJC)
-	$(CC) -shared  -o $@ $^
+	$(CC) -shared $(patsubst %, $(OUT_DIR)/%, $^) -o $(OUT_DIR)/$@
 
 test_property: test_property.o $(TARGET)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
+	$(CC) $(LDFLAGS) $(patsubst %, $(OUT_DIR)/%, $^) -o $(OUT_DIR)/$@ $(LDLIBS)
 
-$(OBJC):%.o:%.c
-	$(CC) -c $(CFLAGS) $< -o $@
+%.o:%.c
+	$(CC) -c $(CFLAGS) $< -o $(OUT_DIR)/$@
 
 .PHONY: clean
 
 clean:
-	rm -f $(OBJC) $(TARGET)
-	rm -f test_property test_property.o
+	rm -f $(OUT_DIR)/*.o $(OUT_DIR)/$(TARGET)
+	rm -f $(OUT_DIR)/test_property
 
 #install:
 #	install -m 755 $(TARGET) $(STAGING_DIR)/usr/lib
