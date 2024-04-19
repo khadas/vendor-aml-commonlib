@@ -9,6 +9,9 @@ endif
 ifeq ($(USE_BATTERY_MONITOR),y)
 UTILS += battery_monitor
 endif
+ifeq ($(USE_UAC_HID),y)
+UTILS += uac_hid
+endif
 
 .PHONY: all install clean
 #CFLAGS += $(AML_UTIL_PRIV_FLAGS)
@@ -53,6 +56,9 @@ auto_shutdown: auto_shutdown.c
 
 battery_monitor: battery_monitor.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT_DIR)/$@ $^ $(LDLIBS)
+
+uac_hid: uac_hid.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 fota_upgrade: fota_upgrade.c ../aml_utility/unifykey.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT_DIR)/$@ $^ $(LDLIBS) -L../fota -ldmgr -lamldeviceproperty -lm -ldl -lpthread
