@@ -12,10 +12,10 @@ all: $(LIB)  urlmisc bootloader_slot
 $(LIB): $(OBJS)
 	$(AR) rc $(OUT_DIR)/$(LIB) $(patsubst %.o, $(OUT_DIR)/%.o, $(OBJS))
 
-urlmisc: urlmisc.o $(OBJS)
+urlmisc: urlmisc.o $(OBJS) $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -L$(OUT_DIR) -lbootloader_message $(patsubst %.o, $(OUT_DIR)/%.o, $^) -o $(OUT_DIR)/$@
 
-bootloader_slot : test.o $(OBJS)
+bootloader_slot : test.o $(OBJS) $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -L$(OUT_DIR) -lbootloader_message $(patsubst %.o, $(OUT_DIR)/%.o, $^) -o $(OUT_DIR)/$@
 
 clean:
