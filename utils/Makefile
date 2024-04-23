@@ -1,5 +1,5 @@
 OUT_DIR ?= .
-UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor
+UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor vad_service
 ifeq ($(USE_SIMULATE_KEY),y)
 UTILS += simulate_key
 endif
@@ -62,6 +62,9 @@ uac_hid: uac_hid.c
 
 fota_upgrade: fota_upgrade.c ../aml_utility/unifykey.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT_DIR)/$@ $^ $(LDLIBS) -L../fota -ldmgr -lamldeviceproperty -lm -ldl -lpthread
+
+vad_service: vad_tool/aml_alsa_mixer.c vad_tool/alsa_device_parser.c vad_tool/aml_vad_wakeup.c vad_tool/vad_service.c vad_tool/tinyalsa/mixer.c vad_tool/tinyalsa/pcm.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -I./vad_tool  -I./vad_tool/tinyalsa/include/tinyalsa  -o $@ $^ $(LDLIBS) -lpthread
 
 all: $(UTILS)
 
