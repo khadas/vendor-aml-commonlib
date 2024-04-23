@@ -178,6 +178,7 @@
 #define AMBUS_DATA_TYPE_uint64_t "t", uint64_t
 #define AMBUS_DATA_TYPE_double "d", double
 #define AMBUS_DATA_TYPE_string "s", char *
+#define AMBUS_DATA_TYPE_unixfd "h", int
 // for a new type ttt, we need to provide macro AMBUS_DATA_TYPE_ttt and ambus_data_type_info_ttt
 
 #define AMBUS_DATA_TYPE_SIG(x) MACRO_GET1ST(MACRO_CAT2(AMBUS_DATA_TYPE_,x))
@@ -391,6 +392,7 @@ AMBUS_DECLARE_DATA_TYPE(int64_t);
 AMBUS_DECLARE_DATA_TYPE(uint64_t);
 AMBUS_DECLARE_DATA_TYPE(double);
 AMBUS_DECLARE_DATA_TYPE(string);
+AMBUS_DECLARE_DATA_TYPE(unixfd);
 
 static const char *AMBUS_DEFAULT_SYSTEM = (const char *)(0);
 static const char *AMBUS_DEFAULT_USER = (const char *)(1);
@@ -626,6 +628,14 @@ struct ambus_data_type<M<K, V>, typename std::enable_if<std::is_same<M<K, V>, st
   }
 };
 
+struct ambus_unix_fd_t {
+  ambus_unix_fd_t() : fd(-1) {}
+  ambus_unix_fd_t(const int f) : fd(f) {}
+  operator int() const { return fd; };
+  int fd;
+};
+template <> struct ambus_data_type<ambus_unix_fd_t> : ambus_simple_type<ambus_unix_fd_t, 'h', int> {};
+
 // output argument must be non-const reference
 template <typename T>
 struct is_output_parameter
@@ -728,6 +738,10 @@ template <> struct ambus_method_call<> : public ambus_vtable {
     member = _name;
     signature = _sig;
     result = _res;
+  }
+  static int handler(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
+    struct ambus_method_call<> *pcall = (struct ambus_method_call<> *)userdata;
+    return pcall->call(m);
   }
   virtual int call(sd_bus_message *m) { return 0; };
 };

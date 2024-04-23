@@ -60,16 +60,11 @@ std::unordered_map<std::string, TestStruct> test_func3() {
 
 AMBUS_STRUCT_DEFINE(TestStruct, name, ival, fval, bval);
 
-static int ambus_method_handler(sd_bus_message *m, void *userdata, sd_bus_error *ret_error) {
-  struct ambus_method_call<> *pcall = (struct ambus_method_call<> *)userdata;
-  return pcall->call(m);
-}
-
 #define NEW_METHOD_ITEM(P, f, ...) new ambus_method_call<decltype(&f)>(#f, &f),
 #define NEW_METHOD_VTABLE(P, f, ...)                                                                                   \
   SD_BUS_METHOD_WITH_OFFSET(#f, ambus_method_call<decltype(&f)>::data_pack::signature_input::value,                    \
-                            ambus_method_call<decltype(&f)>::signature_output::value, ambus_method_handler,            \
-                            (size_t)*P##_methods_ptr++, 0),
+                            ambus_method_call<decltype(&f)>::signature_output::value, ambus_method_call<>::handler,    \
+                            (size_t)*P##_methods_ptr++, SD_BUS_VTABLE_UNPRIVILEGED),
 
 #define REGISTER_DBUS_METHOD(P, ...)                                                                                   \
   static const ambus_method_call<> *P##_methods[] = {MACRO_MAP(NEW_METHOD_ITEM, P, __VA_ARGS__)},                      \
@@ -91,11 +86,11 @@ static const ambus_method_call<> *test_methods[] = {
 static const sd_bus_vtable test_vtable[] = {
     SD_BUS_VTABLE_START(0),
     SD_BUS_METHOD_WITH_OFFSET("test_func1", ambus_method_call<decltype(&test_func1)>::data_pack::signature_input::value,
-                              ambus_method_call<decltype(&test_func1)>::signature_output::value, ambus_method_handler,
-                              (size_t)test_methods[0], 0),
+                              ambus_method_call<decltype(&test_func1)>::signature_output::value,
+                              ambus_method_call<>::handler, (size_t)test_methods[0], SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD_WITH_OFFSET("test_func2", ambus_method_call<decltype(&test_func2)>::data_pack::signature_input::value,
-                              ambus_method_call<decltype(&test_func2)>::signature_output::value, ambus_method_handler,
-                              (size_t)test_methods[1], 0),
+                              ambus_method_call<decltype(&test_func2)>::signature_output::value,
+                              ambus_method_call<>::handler, (size_t)test_methods[1], SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END};
 
 #endif

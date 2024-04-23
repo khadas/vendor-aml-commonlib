@@ -48,19 +48,11 @@ bool set(const std::string &key, const std::string &value) {
 std::map<std::string, std::string> list() { return Property::list(); }
 } // namespace internal
 
-static int ambus_method_handler(sd_bus_message *m, void *userdata,
-                                sd_bus_error *ret_error) {
-  struct ambus_method_call<> *pcall = (struct ambus_method_call<> *)userdata;
-  return pcall->call(m);
-}
-
 static const ambus_method_call<> *prop_methods[] = {
     new ambus_method_call<decltype(&internal::get)>("get", &internal::get),
     new ambus_method_call<decltype(&internal::set)>("set", &internal::set),
     new ambus_method_call<decltype(&internal::list)>("list", &internal::list),
 };
-
-static const ambus_method_call<> *methods_ptr = prop_methods[0];
 
 static const sd_bus_vtable prop_vtable[] = {
     SD_BUS_VTABLE_START(0),
@@ -69,19 +61,19 @@ static const sd_bus_vtable prop_vtable[] = {
         ambus_method_call<decltype(
             &internal::get)>::data_pack::signature_input::value,
         ambus_method_call<decltype(&internal::get)>::signature_output::value,
-        ambus_method_handler, (size_t)prop_methods[0], 0),
+        ambus_method_call<>::handler, (size_t)prop_methods[0], SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD_WITH_OFFSET(
         "set",
         ambus_method_call<decltype(
             &internal::set)>::data_pack::signature_input::value,
         ambus_method_call<decltype(&internal::set)>::signature_output::value,
-        ambus_method_handler, (size_t)prop_methods[1], 0),
+        ambus_method_call<>::handler, (size_t)prop_methods[1], SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD_WITH_OFFSET(
         "list",
         ambus_method_call<decltype(
             &internal::list)>::data_pack::signature_input::value,
         ambus_method_call<decltype(&internal::list)>::signature_output::value,
-        ambus_method_handler, (size_t)prop_methods[2], 0),
+        ambus_method_call<>::handler, (size_t)prop_methods[2], SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_SIGNAL_WITH_NAMES(PROP_DBUS_SIGNAL, "isssss",
                              SD_BUS_PARAM(event) SD_BUS_PARAM(namespace)
                                  SD_BUS_PARAM(key) SD_BUS_PARAM(action)

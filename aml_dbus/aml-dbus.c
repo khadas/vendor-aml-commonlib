@@ -371,6 +371,20 @@ int ambus_data_unpack_string(struct ambus_data_type_info *t, sd_bus_message *m, 
 
 void ambus_data_free_string(struct ambus_data_type_info *t, void *val) { free(*(void **)val); }
 
+int ambus_data_unpack_unixfd(struct ambus_data_type_info *t, sd_bus_message *m, void *val) {
+  int fd = 0;
+  int r = sd_bus_message_read_basic(m, t->signature[0], &fd);
+  if (r >=0 && fd > 0)
+    *(int *)val = dup(fd);
+  return r;
+}
+
+void ambus_data_free_unixfd(struct ambus_data_type_info *t, void *val) {
+  int fd = *(int *)val;
+  if (fd > 0)
+    close(fd);
+}
+
 AMBUS_DEFINE_DATA_TYPE(uint8_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
 AMBUS_DEFINE_DATA_TYPE(bool, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
 AMBUS_DEFINE_DATA_TYPE(int16_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
@@ -381,6 +395,7 @@ AMBUS_DEFINE_DATA_TYPE(int64_t, ambus_data_pack_basic, ambus_data_unpack_basic, 
 AMBUS_DEFINE_DATA_TYPE(uint64_t, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
 AMBUS_DEFINE_DATA_TYPE(double, ambus_data_pack_basic, ambus_data_unpack_basic, NULL);
 AMBUS_DEFINE_DATA_TYPE(string, ambus_data_pack_string, ambus_data_unpack_string, ambus_data_free_string);
+AMBUS_DEFINE_DATA_TYPE(unixfd, ambus_data_pack_basic, ambus_data_unpack_unixfd, ambus_data_free_unixfd);
 
 int ambus_pack_all(sd_bus_message *m, struct ambus_data_pack_info *pi) {
   int r = 0;
