@@ -1,5 +1,5 @@
 OUT_DIR ?= .
-UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq usb_monitor vad_service
+UTILS = wifi_power multi_wifi_load_driver input_eventd usbpower usbtestpm usbtestpm_mx usbtestpm_mx_iddq usbpower_mx_iddq vad_service
 ifeq ($(USE_SIMULATE_KEY),y)
 UTILS += simulate_key
 endif
@@ -9,8 +9,14 @@ endif
 ifeq ($(USE_BATTERY_MONITOR),y)
 UTILS += battery_monitor
 endif
+
 ifeq ($(USE_UAC_HID),y)
 UTILS += uac_hid
+endif
+
+# if USE_USB_MONITOR is empty, it means y
+ifneq ($(USE_USB_MONITOR),n)
+UTILS += usb_monitor
 endif
 
 .PHONY: all install clean
