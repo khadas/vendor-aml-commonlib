@@ -117,6 +117,8 @@ static char *acquire_envimg_buffer() {
 
   if (!gs_shm_available) {
     gs_env_shm_info = (struct uenv_img_shm_info *)malloc(size);
+    memset((void *)gs_env_shm_info, 0, size);
+    INFO("[ubootenv] clean gs_env_shm_info!\n");
     return gs_env_shm_info->imgdata;
   }
 
